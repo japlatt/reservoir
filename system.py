@@ -17,13 +17,13 @@ class system:
     D: dimension of the system
     fjac: jacobian of f, needed for computation of lyapunov exponents
     '''
-    def __init__(self, f, p, D, fjac = None):
+    def __init__(self, f, p, D, dt, fjac = None):
         self.f = f
         self.fjac = fjac
         self.p = p
         self.D = D
+        self.dt = dt
         self.t = None
-        self.dt = None
         self.u = None
         self.U = None
         self.T = None
@@ -37,12 +37,12 @@ class system:
     tend: end time
     tstep: time step for integration
     '''
-    def integrate(self, tstart, tend, tstep):
+    def integrate(self, tstart, tend, tstep = None):
         assert(tstart < tend), 'start needs to be before end'
-        t = np.arange(tstart, tend, tstep)
+        if tstep is not None: self.dt = tstep
+        t = np.arange(tstart, tend, self.dt)
         u = odeint(self.f, np.random.rand(self.D), t,
                    args = (self.p,))
-        self.dt = tstep
         self.t = t
         self.u = u
 
