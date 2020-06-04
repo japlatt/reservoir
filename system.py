@@ -87,7 +87,7 @@ class system:
         ui = self.u[:, u_ind]
         MI = np.zeros(len(lag))
         if num_bins == None: num_bins = int(np.round(np.log2(len(ui))+1)) #Sturges rule
-        for l in lag: MI[l-1] = self.calc_MI(ui[:-l], ui[l:], num_bins)
+        for l in lag: MI[l-1] = self.__calc_MI(ui[:-l], ui[l:], num_bins)
         
 
 
@@ -207,7 +207,7 @@ class system:
     Calculate mutual information of 2 time series X, Y
     '''
     @staticmethod
-    def calc_MI(X, Y, bins):
+    def __calc_MI(X, Y, bins):
         c_xy = np.histogram2d(X, Y, bins)[0]
         MI = mutual_info_score(None, None, contingency=c_xy)
         return MI

@@ -10,7 +10,8 @@ class reservoir:
     '''
     initialize the class
 
-    params = {'N': size of the reservoir network,
+    params = {'name': name of the reservoir, used for saving files
+              'N': size of the reservoir network,
               'D': dimension of the input system,
               'gamma': time const parameter,
               'M_a': lower bound on connection matrix M,
@@ -18,8 +19,9 @@ class reservoir:
               'M_pnz': sparsity of M (0-1),
               'M_SR': spectral radius of M (scales M_a/b),
               'Win_a': lower bound input matrix Win,
-              'Win_b': upper bound input matrix Win
-              'time_step': time step for solving the model}
+              'Win_b': upper bound input matrix Win,
+              'time_step': time step for solving the model,
+              'ifsave': save images and files or not}
     '''
 
     def __init__(self, params):
@@ -48,6 +50,7 @@ class reservoir:
         self.U = None
         self.Wout = None
         self.train_data = None
+        self.x0 = None
         self.train_t = None
         self.pred_t = None
         self.pred_data = None
@@ -97,15 +100,17 @@ class reservoir:
         data = train[int(trans_time/self.time_step):, :][::int(train_time_step/self.time_step)]
 
         self.Wout = self.__getWout(t, data, beta, constraints)
-        self.train_data = data
+        self.train_data = np.dot(self.Wout, self.Q(data).T)
+        self.x0 = data[-1]
         self.train_t = t
+        return data
 
     '''
     Plot the training data to compare to the true system
     '''
     def plotTraining(self, show = True):
-        dataQ = self.Q(self.train_data)
-        u_train = np.dot(self.Wout, dataQ.T)
+        assert(self.train_data is not None), 'must train the model first'
+        u_train = self.train_data
         u = np.array([x(self.train_t) for x in self.U]) #construct u at time points needed
 
         fig, ax = plt.subplots(self.D, 1, sharex = True, figsize = (10, 7))
@@ -127,10 +132,11 @@ class reservoir:
     acc: accuracy for determining predictive power
     '''
     def predict(self, pred_time, acc = 1, show = True):
+        assert(self.train_data is not None), 'must train the model first'
         p = (self.gamma, self.M, self.Win, self.Wout, self.Q)
         self.pred_t = np.arange(self.train_t[-1], self.train_t[-1]+pred_time, self.time_step)
         pred = odeint(self.__predicting,
-                       self.train_data[-1],
+                       self.x0,
                        self.pred_t,
                        args = (p,))
 
@@ -142,7 +148,7 @@ class reservoir:
 
         if show:
             fig, ax = plt.subplots(self.D, 1, sharex = True, figsize = (10, 7))
-            self.plotPred(fig, ax, u, u_pred, self.pred_t, self.D)
+            self.__plotPred(fig, ax, u, u_pred, self.pred_t, self.D)
 
         pred_acc = 0
         diff = np.sqrt(np.linalg.norm(u.T - u_pred.T, axis = 1)) > acc
@@ -187,22 +193,25 @@ class reservoir:
     def globalLyap(self, time, dt, system):
         assert(self.train_data is not None), 'Need to train the reservoir to find Lyapunov Exponents'
         assert(self.dQ is not None), 'set DQ before running globalLyap'
-        x0 = self.train_data[-1]
-        t = np.arange(0, time, dt)
+        assert(self.train_t[-1]+time < system.t[-1]), 'make sure U is valid for full time sequence'
+        x0 = self.x0
 
-        system.globalLyap(time, dt, x0 = np.array([u(self.train_t[-1]) for u in system.U]))
-        LE_system = np.sort(system.LE)[::-1]
+        t_init = self.train_t[-1]
+        t = np.arange(t_init, t_init+time, dt)
+
+        system.globalLyap(time, dt, x0 = np.array([u(t_init) for u in system.U]))
+        LE_system = system.LE
 
         p_list = (self.U, self.gamma, self.M, self.Win)
         p_jac = (self.Q, self.dQ, self.gamma, self.M, self.Win, self.Wout)
         LE = lyap.computeLE(self.__listening, self.__pred_jac, t,
-                            np.min(self.time_step, dt/4), p_list, p_jac, x0, self.N)
+                            min(self.time_step, dt/4), p_list, p_jac, x0, self.N)
 
         self.LE = LE
         self.LE_system = LE_system
         self.LE_t = t
 
-        return LE_system[-1], LE[-1]
+        return np.sort(LE_system[-1])[::-1], LE[-1]
 
     '''
     Plot the calculated Lyapunov exponents
@@ -213,10 +222,14 @@ class reservoir:
         fig,ax = plt.subplots(1,1,sharex=True) 
         lyap.plotNLyapExp(self.LE, t, num_exp, fig, ax)
         # lyap.plotNLyapExp(self.LE_system, t, np.sum(self.LE_system > -2), fig, ax)
-        for i in range(2): 
+        for i in range(max(2, np.sum(self.LE_system[-1] > -2))): 
             plt.plot(t[1:], self.LE_system[:,i], 'r--')
         if self.ifsave: fig.savefig(self.name+'_LE.pdf', bbox_inches = 'tight')
         if show: plt.show()
+
+    def getKYDim(self):
+        assert(self.LE is not None), 'run globalLyap first'
+        return lyap.KY_dim(self.LE)
 
 
 
@@ -227,7 +240,7 @@ class reservoir:
     plot the prediction of the reservoir
     '''
     @staticmethod
-    def plotPred(fig, ax, u, u_pred, t, D):
+    def __plotPred(fig, ax, u, u_pred, t, D):
         for i in range(D):
             ax[i].plot(t, u[i], 'b-', linewidth = 2, label = 'True')
             ax[i].plot(t, u_pred[i], 'r--',linewidth = 2, label = 'Prediction')

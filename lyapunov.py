@@ -39,7 +39,7 @@ def computeLE(f, fjac, t, dt, pf, pjac, x0, D):
     Ssol = np.append(x0, Phi0)
     print("Integrating system for LE calculation...")
 
-    with Bar('Processing', max=len(t)) as bar:
+    with Bar('Processing', max=len(t)-1) as bar:
         for i,(t1,t2) in enumerate(zip(t[:-1], t[1:])):
             sol = odeint(dSdt,
                          Ssol,
