@@ -92,7 +92,7 @@ if __name__ == '__main__':
 
     lor63Res.setDQ(dQ)
 
-    lor63Res.globalLyap(20, 0.1, lor63sys)
+    lor63Res.globalLyap(40, 0.1, lor63sys)
 
     lor63Res.plotLE(10, show = False)
 
