@@ -24,7 +24,7 @@ class reservoir:
 
     def __init__(self, params):
 
-        self.params = params
+        self.name = params['name']
 
         self.N = params['N']
         self.D = params['D']
@@ -81,12 +81,13 @@ class reservoir:
                     beta,
                     constraints = None):
 
-        assert(train_time_step > self.time_step), 'Training time step must be > that integration time step'
+        assert(train_time_step >= self.time_step), 'Training time step must be > that integration time step'
 
         self.Q = Q
         self.U = U
 
         p = (U, self.gamma, self.M, self.Win)
+
         train = odeint(self.__listening,
                        np.random.rand(self.N),
                        np.arange(-trans_time, train_time, self.time_step),
@@ -102,7 +103,7 @@ class reservoir:
     '''
     Plot the training data to compare to the true system
     '''
-    def plotTraining(self):
+    def plotTraining(self, show = True):
         dataQ = self.Q(self.train_data)
         u_train = np.dot(self.Wout, dataQ.T)
         u = np.array([x(self.train_t) for x in self.U]) #construct u at time points needed
@@ -113,9 +114,9 @@ class reservoir:
             ax[i].plot(self.train_t, u_train[i], 'r--',linewidth = 2, label = 'Estimate')
         ax[i].set_xlabel('Time', fontsize = 16)
         ax[0].set_title('Training Data: RMSD {:1.2f}'.format(self.rmsd), fontsize = 20)
-        plt.legend()
+        ax[i].legend(loc = 'upper right')
         if self.ifsave: fig.savefig(self.name+'_train.pdf', bbox_inches = 'tight')
-        plt.show()
+        if show: plt.show()
 
 
     '''
@@ -185,16 +186,17 @@ class reservoir:
     '''
     def globalLyap(self, time, dt, system):
         assert(self.train_data is not None), 'Need to train the reservoir to find Lyapunov Exponents'
-
+        assert(self.dQ is not None), 'set DQ before running globalLyap'
         x0 = self.train_data[-1]
         t = np.arange(0, time, dt)
 
-        LE_system = system.globalLyap(time, dt, x0 = np.array([u(self.train_t[-1]) for u in system.U]))
-        
+        system.globalLyap(time, dt, x0 = np.array([u(self.train_t[-1]) for u in system.U]))
+        LE_system = np.sort(system.LE)[::-1]
+
         p_list = (self.U, self.gamma, self.M, self.Win)
         p_jac = (self.Q, self.dQ, self.gamma, self.M, self.Win, self.Wout)
         LE = lyap.computeLE(self.__listening, self.__pred_jac, t,
-                            self.time_step, p_list, p_jac, x0, self.N)
+                            np.min(self.time_step, dt/4), p_list, p_jac, x0, self.N)
 
         self.LE = LE
         self.LE_system = LE_system
@@ -202,18 +204,19 @@ class reservoir:
 
         return LE_system[-1], LE[-1]
 
-    def plotLE(self, num_exp):
+    '''
+    Plot the calculated Lyapunov exponents
+    '''
+    def plotLE(self, num_exp, show = True):
         assert(self.LE is not None), 'run globalLyap first'
-        LE = self.LE
-        LE_system = self.LE_system
         t = self.LE_t
-
-
         fig,ax = plt.subplots(1,1,sharex=True) 
-        lyap.plotNLyapExp(LE, t, num_exp, fig, ax)
-        lyap.plotNLyapExp(LE_system, t, np.sum(LE_system > -2), fig, ax)
+        lyap.plotNLyapExp(self.LE, t, num_exp, fig, ax)
+        # lyap.plotNLyapExp(self.LE_system, t, np.sum(self.LE_system > -2), fig, ax)
+        for i in range(2): 
+            plt.plot(t[1:], self.LE_system[:,i], 'r--')
         if self.ifsave: fig.savefig(self.name+'_LE.pdf', bbox_inches = 'tight')
-        plt.show()
+        if show: plt.show()
 
 
 
@@ -273,7 +276,7 @@ class reservoir:
                 end = start+c[1]-c[0]
                 Wout[i, c[0]:c[1]] = Wi[start:end]
         self.rmsd = self.__rmsd(dataQ, u, beta, Wout)
-        return Wout
+        return np.array(Wout, order = 'C')
 
 
     '''
@@ -320,9 +323,7 @@ class reservoir:
         N = len(r)
         MR = np.dot(M, r)
         q = Q(r).T
-        # dq = np.concatenate((np.eye(N), 2*np.diag(r)))
         dq = dQ(r)
-
         WU = np.linalg.multi_dot((Win, Wout, q))
         S = np.diag(1 - np.tanh(MR+WU)**2)
         Wuhat = np.linalg.multi_dot((Win, Wout, dq))

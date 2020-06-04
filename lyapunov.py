@@ -4,6 +4,19 @@ from scipy.integrate import odeint
 from progress.bar import Bar
 import gc
 
+'''
+Compute the global lyapunov exponents of a dynamical system
+defined by f with jacobian fjac.
+
+f: dynamical system equations f(x, t, p)
+fjac: jacobian of dynamical system f(x, t, p)
+t: array, time over which to run QR decomposition algorithm
+dt: integration dt for the dynamical system f
+pf: parameters for f
+pjac: parameters jacobian
+x0: start point for computing LE
+D: dimension of the system
+'''
 def computeLE(f, fjac, t, dt, pf, pjac, x0, D):
 
     def dPhi_dt(Phi, t, y, p, Dim):
@@ -12,12 +25,10 @@ def computeLE(f, fjac, t, dt, pf, pjac, x0, D):
         rdPhi = np.dot(fjac(y, t, p), rPhi)
         return rdPhi.flatten()
 
-    def dSdt(S, t, pf, pjac, Dim):
+    def dSdt(t, S, pf, pjac, Dim):
         """
         Differential equations for combined state/variational matrix
         propagation. This combined state is called S.
-
-        p must have the dimension as the last element
         """
         y = S[:Dim]
         Phi = S[Dim:]
@@ -33,7 +44,8 @@ def computeLE(f, fjac, t, dt, pf, pjac, x0, D):
             sol = odeint(dSdt,
                          Ssol,
                          np.arange(t1, t2, dt),
-                         args = (pf, pjac, D))
+                         args = (pf, pjac, D),
+                         tfirst = True)
             x = sol[-1][:D]
             rPhi = sol[-1][D:].reshape(D, D)
             
@@ -51,6 +63,9 @@ def computeLE(f, fjac, t, dt, pf, pjac, x0, D):
     print('done')
     return LE
 
+'''
+plot num_exp number of exponents
+'''
 def plotNLyapExp(LE, t, num_exp, fig, ax):
     fig.set_tight_layout(True) 
 
@@ -61,6 +76,10 @@ def plotNLyapExp(LE, t, num_exp, fig, ax):
     ax.set_xlabel(r'$t$', size=14) 
     ax.set_title('%d largest Lyapunov exponents'%(num_exp,)) 
 
+
+'''
+Kaplan-Yorke dimension of the system
+'''
 def KY_dim(LE):
     LE = LE[-1]
     j = -1
