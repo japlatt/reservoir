@@ -6,7 +6,9 @@ amount of memory.
 import numpy as np
 import matplotlib.pyplot as plt
 import dill
+import sys
 
+sys.path.insert(1, '../')
 #import reservoir and system code
 import reservoir as res
 import system as syst
@@ -43,13 +45,10 @@ if __name__ == '__main__':
     D = 3
 
     # build the system from the dynamical equations
-    lor63sys = syst.system(lorenz, (sigma, rho, beta), D, jac)
+    lor63sys = syst.system(lorenz, (sigma, rho, beta), D, 0.001, fjac = jac)
 
-    t, u = lor63sys.integrate(-100, 100, 0.001)
-    U = lor63sys.getU() #function to feed to reservoir
 
     #build reservoir
-
     N = 2000
     sigma = 0.014
 
@@ -64,14 +63,14 @@ if __name__ == '__main__':
               'M_SR': 0.9, #M connectivity matrix spectral radius
               'Win_a': -sigma, #Win input matrix lower bound
               'Win_b': sigma, #Win input matrix upper bound
-              'time_step': 0.02, #integration time step for reservoir
-              'saveplots': True} #save the plots
+              'time_step': 0.01, #integration time step for reservoir
+              'spinup_time': 40, #time it takes to synchronize res with sys
+              'system': lor63sys, #system to run reservoir over
+              'saveplots': False} #save the plots
 
     #build the reservoir
     lor63Res = res.reservoir(params)
 
-
-    trans_time = 20
     train_time = 60
     train_time_step = 0.02
     beta = 1e-6
@@ -79,23 +78,20 @@ if __name__ == '__main__':
     #optional parameter
     constraints = [[(0, N)],
                    [(0, N)],
-                   [(0, N//2), (3*N//2, 2*N)]]
+                   [(0, 2*N)]]
 
     print('training')
-    lor63Res.train(trans_time, #transient time for synchronization
-                   train_time, #time to train the reservoir
+    lor63Res.train(train_time, #time to train the reservoir
                    train_time_step, #time step over which to train (> integration time step)
-                   U,
                    Q,
                    beta,
                    constraints = constraints)
 
     lor63Res.setDQ(dQ)
 
-    lor63Res.globalLyap(40, 0.1, lor63sys)
+    lor63Res.globalLyap(25, 0.1)
 
-    lor63Res.plotLE(10, show = False)
-
+    # lor63Res.plotLE(10)
     with open(lor63Res.name+'.pkl', 'wb') as file:
         dill.dump(lor63Res, file)
     
