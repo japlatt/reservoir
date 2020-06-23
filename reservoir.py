@@ -21,6 +21,8 @@ class reservoir:
               'Win_a': lower bound input matrix Win,
               'Win_b': upper bound input matrix Win,
               'time_step': time step for solving the model,
+              'spinup_time': time it takes to synchronize res with sys
+              'system': system to run reservoir over
               'ifsave': save images and files or not}
     '''
 
@@ -68,10 +70,8 @@ class reservoir:
     '''
     train the reservoir on data to find Wout
 
-    trans_time = transient time to integrate to make sure reservoir synchronized
     train_time = time of the training window
     train_time_step = time step for finding Wout
-    U = array of D, 1 dimensional interpolation functions valid for t in [-trans_time, train_time+pred_time]
     Q = function specifying the basis for u = Wout Q(r)
     beta = tikhenov regularization term
     constraints = double array of tuples giving the values of Wout to solve for
@@ -81,11 +81,12 @@ class reservoir:
                     train_time_step,
                     Q,
                     beta,
-                    constraints = None):
+                    constraints = None,
+                    get_jac = False):
 
         assert(train_time_step >= self.time_step), 'Training time step must be > that integration time step'
 
-        x0, self.Utrain = self.__spinup(train_time)
+        x0, self.Utrain, _ = self.__spinup(train_time)
         train = odeint(self.__listening,
                        x0,
                        np.arange(0, train_time, self.time_step),
@@ -98,7 +99,11 @@ class reservoir:
         self.Q = Q
         self.Wout = self.__getWout(self.train_t, data, beta, constraints)
         self.train_data = np.dot(self.Wout, Q(data).T)
-        return data
+
+        if get_jac:
+            Jac_est, Jac = self.__get_train_jac(data)
+            return data, Jac_est, Jac
+        return data, None, None
 
     '''
     Plot the training data to compare to the true system
@@ -119,16 +124,32 @@ class reservoir:
 
 
     '''
+    get the difference between the jacobian of listening reservoir with respect to inputs
+    and the jacobian of the system over the training time.
+    '''
+    # def getTrainJac(self, show = False):
+    #     assert(self.Wout is not None), 'must train the model first'
+    #     assert(self.system.fjac is not None), 'must provide system with Jacobian'
+
+    #     if show:
+    #         fig = plt.figure(figsize = (10, 7))
+    #         plt.plot(self.train_t, self.train_jac_diff)
+    #         if self.ifsave: fig.savefig(self.name+'_train_jac.pdf', bbox_inches = 'tight')
+    #     return self.train_jac_diff
+
+
+    '''
     Use the predicting reservoir to predict forward in time.
     Plot the outcome.
 
     pred_time: time to check the prediction
     acc: accuracy for determining predictive power
     '''
-    def predict(self, pred_time, acc = 1, show = True):
+    def predict(self, pred_time, acc = None, show = True):
         assert(self.train_data is not None), 'must train the model first'
+        if acc is None: acc = self.D
 
-        x0, U = self.__spinup(pred_time)
+        x0, U, spinup = self.__spinup(pred_time)
 
         p = (self.gamma, self.M, self.Win, self.Wout, self.Q)
         self.pred_t = np.arange(0, pred_time, self.time_step)
@@ -142,7 +163,11 @@ class reservoir:
 
         if show:
             fig, ax = plt.subplots(self.D, 1, sharex = True, figsize = (10, 7))
-            self.__plotPred(fig, ax, u, u_pred, self.pred_t, self.D)
+            t_spin = np.arange(-min(self.trans_time/2, 10), 0, self.time_step)
+            spin = np.dot(self.Wout, self.Q(spinup).T)
+            spin = spin.T[int(len(spin.T) - len(t_spin)):]
+            self.__plotPred(fig, ax, U, u_pred, spin.T,
+                            t_spin, self.pred_t, self.D)
 
         pred_acc = 0
         diff = np.sqrt(np.linalg.norm(u.T - u_pred.T, axis = 1)) > acc
@@ -182,13 +207,12 @@ class reservoir:
     time: as time-> large the accuracy of the lyap estimation increases
     dt: resolution over which to copute the lyap exp, make small to reveal
         fine structure in local variations
-    system: system for which U was generated
     '''
     def globalLyap(self, time, dt):
         assert(self.train_data is not None), 'Need to train the reservoir to find Lyapunov Exponents'
         assert(self.dQ is not None), 'set DQ before running globalLyap'
 
-        x0, U = self.__spinup(time)
+        x0, U, _ = self.__spinup(time)
 
         t = np.arange(0, time, dt)
 
@@ -242,15 +266,20 @@ class reservoir:
                        np.arange(-self.trans_time, 0, self.time_step),
                        args = ((U, self.gamma, self.M, self.Win),))
 
-        return spinup[-1], U
+        return spinup[-1], U, spinup
     '''
     plot the prediction of the reservoir
     '''
     @staticmethod
-    def __plotPred(fig, ax, u, u_pred, t, D):
+    def __plotPred(fig, ax, U, u_pred, spinup, t_spin, t, D):
         for i in range(D):
-            ax[i].plot(t, u[i], 'b-', linewidth = 2, label = 'True')
+            u = U[i](t)
+            u_spin = U[i](t_spin)
+            ax[i].plot(t_spin, u_spin, 'b-', linewidth = 2)
+            ax[i].plot(t_spin, spinup[i], 'r--', linewidth = 2)
+            ax[i].plot(t, u, 'b-', linewidth = 2, label = 'True')
             ax[i].plot(t, u_pred[i], 'r--',linewidth = 2, label = 'Prediction')
+            ax[i].axvline(0, color = 'k', lw = 2)
         ax[i].set_xlabel('Time', fontsize = 16)
         ax[0].set_title('Predicting Data', fontsize = 20)
         plt.legend()
@@ -321,6 +350,31 @@ class reservoir:
         r = gamma * (-r + np.tanh(MR+WU))
         return r
 
+    '''Jacobian of __listening with respect to u'''
+    @staticmethod
+    def __input_jac(r, t, p):
+        U, gamma, Q, M, Win, Wout = p
+        MR = np.dot(M, r)
+        WU = np.dot(Win, np.array([u(t) for u in U]))
+        S = 1 - np.tanh(MR+WU)**2
+        J = []
+        for s in S.T:
+            sW = np.dot(np.diag(s),Win)
+            J.append(np.dot(Wout, sW))
+        return np.array(J)
+
+
+    def __get_train_jac(self, data):
+        assert(self.system.fjac is not None), 'set fjac for system'
+        Jac_est = self.__input_jac(data.T, self.train_t,
+                                   (self.Utrain, self.gamma,
+                                    self.Q, self.M, self.Win, self.Wout))
+
+        X = np.array([u(self.train_t) for u in self.Utrain])
+        Jac = np.zeros((len(self.train_t), self.D, self.D))
+        for i in range(len(self.train_t)):
+            Jac[i] = self.system.fjac(X[:, i], self.train_t[i], self.system.p)
+        return Jac_est, Jac
 
     '''predicting reservoir
     dr/dt = gamma * (-r + tanh(M*r+Win*Wout*Q(r)))

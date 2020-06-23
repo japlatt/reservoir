@@ -46,6 +46,7 @@ def computeLE(f, fjac, t, dt, pf, pjac, x0, D):
                          np.arange(t1, t2, dt),
                          args = (pf, pjac, D),
                          tfirst = True)
+
             x = sol[-1][:D]
             rPhi = sol[-1][D:].reshape(D, D)
             
