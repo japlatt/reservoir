@@ -145,11 +145,12 @@ class reservoir:
     pred_time: time to check the prediction
     acc: accuracy for determining predictive power
     '''
-    def predict(self, pred_time, acc = None, show = True):
+    def predict(self, pred_time, acc = 1, show = True):
         assert(self.train_data is not None), 'must train the model first'
-        if acc is None: acc = self.D
 
         x0, U, spinup = self.__spinup(pred_time)
+
+        self.predSysx0 = np.array([u(0) for u in U])
 
         p = (self.gamma, self.M, self.Win, self.Wout, self.Q)
         self.pred_t = np.arange(0, pred_time, self.time_step)
@@ -161,6 +162,20 @@ class reservoir:
         u_pred = np.dot(self.Wout, self.Q(pred).T)
         u = np.array([x(self.pred_t) for x in U]) #construct u at time points needed
 
+        pred_acc = self.pred_t[-1]
+        diff = np.linalg.norm(u.T - u_pred.T, axis = 1)
+        self.diff = diff
+        cum_diff = np.cumsum(diff)/np.arange(1, len(diff)+1)
+        diff = cum_diff > acc
+
+        for i in range(len(diff)):
+            if np.all(diff[i:]):
+                pred_acc = self.pred_t[i]
+                break
+
+        self.pred_acc = pred_acc-self.pred_t[0]
+
+
         if show:
             fig, ax = plt.subplots(self.D, 1, sharex = True, figsize = (10, 7))
             t_spin = np.arange(-min(self.trans_time/2, 10), 0, self.time_step)
@@ -168,21 +183,9 @@ class reservoir:
             spin = spin.T[int(len(spin.T) - len(t_spin)):]
             self.__plotPred(fig, ax, U, u_pred, spin.T,
                             t_spin, self.pred_t, self.D)
-
-        pred_acc = 0
-        diff = np.sqrt(np.linalg.norm(u.T - u_pred.T, axis = 1)) > acc
-
-        window = 10 #only triggers divergence if points in window > acc
-
-        for i in range(len(diff)-window):
-            if np.all([diff[i+j] for j in range(window)]):
-                pred_acc = self.pred_t[i]
-                break
-        if show:
             for k in range(self.D): ax[k].axvline(pred_acc, linestyle = '--')
             if self.ifsave: fig.savefig(self.name+'_pred.pdf', bbox_inches = 'tight')
             plt.show()
-        self.pred_acc = pred_acc-self.pred_t[0]
         return self.pred_acc
 
 
@@ -258,7 +261,7 @@ class reservoir:
     '''
     def __spinup(self, time):
         # integrate the system for spin up
-        self.system.integrate(-self.trans_time, time)
+        self.system.integrate(-2*self.trans_time, time)
         U = self.system.getU() 
 
         spinup = odeint(self.__listening,

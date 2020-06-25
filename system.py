@@ -5,6 +5,8 @@ from sklearn.metrics import mutual_info_score
 import matplotlib.pyplot as plt
 import scipy as sp
 import lyapunov as lyap
+from multiprocessing import Pool
+from functools import partial
 
 
 class system:
@@ -23,12 +25,14 @@ class system:
         self.p = p
         self.D = D
         self.dt = dt
-        self.t = None
-        self.u = None
         self.U = None
         self.T = None
         self.LE = None
         self.min_emb = None
+        self.t = np.arange(0, 1000*dt, dt)
+        self.u = odeint(self.f, np.random.rand(self.D), self.t,
+                   args = (self.p,))
+
 
     '''
     Integrate system forward in time using odeint.  Needed to run anything else.
@@ -40,8 +44,10 @@ class system:
     def integrate(self, tstart, tend, tstep = None):
         assert(tstart < tend), 'start needs to be before end'
         if tstep is not None: self.dt = tstep
+        x0 = self.u[np.random.choice(self.u.shape[0], 1, replace=False)].squeeze()
+        x0 += np.random.rand(self.D)
         t = np.arange(tstart, tend, self.dt)
-        u = odeint(self.f, np.random.rand(self.D), t,
+        u = odeint(self.f, x0, t,
                    args = (self.p,))
         self.t = t
         self.u = u
@@ -153,7 +159,7 @@ class system:
         print(np.round(NFNN,3)*100)
         for i, n in enumerate(NFNN):
             if n < 1e-3: 
-                print('minimum embedding dimension is {:d} with NFNN {:1.3f}'.format(i+1, n))
+                print('minimum embedding dimension is {:d} with NFNN {:1.3f}'.format(i+1, n*100))
                 self.min_emb = i+1
                 return
         print('ERROR: need to search more dimensions')
@@ -166,6 +172,7 @@ class system:
     time: as time-> large the accuracy of the lyap estimation increases
     dt: resolution over which to copute the lyap exp, make small to reveal
         fine structure in local variations
+    x0: point at which to start computation of global exp
     '''
     def globalLyap(self, time, dt, x0 = None):
         assert(self.fjac is not None), 'Need to provide jacobian for lyapunov expononents'
@@ -200,6 +207,36 @@ class system:
         assert(self.LE is not None), 'run globalLyap first'
         return lyap.KY_dim(self.LE)
 
+
+    '''
+    Calculate the finite time lyapunov exponents at points x
+
+    x: 2D array of points at which to calculate FTLE
+    L: number of steps ahead to calculate
+    dt: time step so T = L*dt where T is the time going forward
+    multi: multiprocessing true or false
+    '''
+    def localExp(self, x, L, dt, multi = False):
+        assert(self.fjac is not None), 'Need to provide jacobian for lyapunov expononents'
+        assert(len(x.shape) == 2), 'Provide multidimensional array'
+        n, D = x.shape
+        assert(D == self.D)
+        T = L*dt
+
+        if multi:
+            with Pool() as pool: 
+                parr_fun = partial(lyap.LLE, f = self.f, fjac = self.fjac,
+                                   pf = self.p, pjac = self.p, T = T, L = L, dt = self.dt)
+                LE= pool.map(parr_fun, x)
+                pool.close()
+                pool.join()  
+
+        else:
+            LE = []
+            for i, x0 in enumerate(x):
+                LE.append(lyap.LLE(x0, self.f, self.fjac,
+                                 self.p, self.p, T, L, self.dt))
+        return np.array(LE)
 
 
     ########## PRIVATE FUNCTIONS ####################

@@ -1,12 +1,11 @@
 '''
-This example calculates the lyapunov exponents for the predicting
-reservoir.  The algorithm takes a long time and a significant
-amount of memory.
+This example calculates the variation in prediction for a particular
+set of parameters.  Shows the random variation in prediction.
 '''
 import numpy as np
 import matplotlib.pyplot as plt
-import dill
 import sys
+from progress.bar import Bar
 
 sys.path.insert(1, '../')
 #import reservoir and system code
@@ -47,7 +46,7 @@ if __name__ == '__main__':
     # build the system from the dynamical equations
     lor63sys = syst.system(lorenz, (sigma, rho, beta), D, 0.001, fjac = jac)
 
-
+    #------------------------------------------------------------------------
     #build reservoir
     N = 2000
     sigma = 0.014
@@ -64,12 +63,9 @@ if __name__ == '__main__':
               'Win_a': -sigma, #Win input matrix lower bound
               'Win_b': sigma, #Win input matrix upper bound
               'time_step': 0.001, #integration time step for reservoir
-              'spinup_time': 40, #time it takes to synchronize res with sys
+              'spinup_time': 20, #time it takes to synchronize res with sys
               'system': lor63sys, #system to run reservoir over
               'saveplots': False} #save the plots
-
-    #build the reservoir
-    lor63Res = res.reservoir(params)
 
     train_time = 60
     train_time_step = 0.02
@@ -80,19 +76,28 @@ if __name__ == '__main__':
                    [(0, N)],
                    [(0, N//2), (3*N//2, 2*N)]]
 
-    print('training')
-    lor63Res.train(train_time, #time to train the reservoir
-                   train_time_step, #time step over which to train (> integration time step)
-                   Q,
-                   beta,
-                   constraints = constraints)
 
-    lor63Res.setDQ(dQ)
+    num_res = 100 #build 100 reservoirs with the same parameters
+    trials = 10
+    predictions = np.zeros((num_res, trials))
+    with Bar('Processing', max=num_res*trials) as bar:
+        for i in range(num_res):
 
-    lor63Res.globalLyap(50, 0.1)
+            #build the reservoir
+            lor63Res = res.reservoir(params)
 
-    # lor63Res.plotLE(10)
-    with open(lor63Res.name+'.pkl', 'wb') as file:
-        dill.dump(lor63Res, file)
+            lor63Res.train(train_time, #time to train the reservoir
+                           train_time_step, #time step over which to train (> integration time step)
+                           Q,
+                           beta,
+                           constraints = constraints)
+
+            for j in range(trials):
+                predictions[i][j] = lor63Res.predict(10, show = False)
+                bar.next()
+
+    np.savetxt('pred_variation.txt', predictions)
+
+
     
 

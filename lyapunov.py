@@ -1,8 +1,13 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import odeint
+from scipy.integrate import solve_ivp
 from progress.bar import Bar
 import gc
+
+
+
+########### GLOBAL EXPONENTS ##############################
 
 '''
 Compute the global lyapunov exponents of a dynamical system
@@ -91,3 +96,88 @@ def KY_dim(LE):
         if temp < 0: break
         lyap_sum = temp
     return j+lyap_sum/abs(LE[j])
+
+
+###### LOCAL EXPONENTS ###########################
+
+'''
+Perform a recursive QR decomposition on a matrix
+A = [A(L), A(L-1),...,A(1)] in order to find the
+eigenvalues of A in a numerically stable way in the 
+case that A is ill-conditioned.
+
+num_it = the number of times to perform recursion.
+abs(Q) should be arbitrarily close to the identity matrix.
+
+returns:
+lRQR = lyapunov exponents from max to min
+Q = need to check if this is close to identity matrix.
+Up to a minus sign.
+'''
+def rec_QR(A, T, num_it = 5):
+    M_arr = A
+    Q0 = np.eye(np.shape(A)[1])
+    for _ in range(num_it):
+        L, N, _ = np.shape(M_arr)
+        Q_prev = Q0
+        R_arr = np.zeros((L, N, N))
+        for i in range(L-1, -1, -1):
+            Q, R = np.linalg.qr(np.dot(M_arr[i], Q_prev))
+            R_arr[i] = R
+            Q_prev = Q
+        M_arr = np.append(R_arr, [Q], axis = 0)
+
+    diag = [np.diag(x) for x in R_arr]
+    diag.append(np.diag(Q))
+    diag = np.abs(diag)
+    lRQR = np.sort(np.sum(np.log(diag), axis = 0)/(2*T))[::-1]
+    return lRQR, Q
+
+'''
+Compute the local lyapunov expoenents (LLE) of a given system.
+
+x0 = point at which to calculate the LLE
+T = time over which to compute the LLE
+L = number of steps
+dt = integration time step
+pf = parameters of system
+
+return lyapunov exponents
+'''
+def LLE(x0, f, fjac, pf, pjac, T, L, dt):
+
+    def dPhi_dt(Phi, t, x, pjac, Dim):
+        """ The variational equation """
+        rPhi = np.reshape(Phi, (Dim, Dim))
+        rdPhi = np.dot(fjac(x, t, pjac), rPhi)
+        return rdPhi.flatten()
+
+    def dSdt(t, S, pf, pjac, Dim):
+        """
+        Differential equations for combined state/variational matrix
+        propagation. This combined state is called S.
+        
+        p must have the dimension as the last element
+        """
+        x = S[:Dim]
+        Phi = S[Dim:]
+        return np.append(f(x, t, pf), dPhi_dt(Phi, t, x, pjac, Dim))
+
+    x_arr = [x0]
+    Phi_arr = []
+    tL = np.linspace(0, T, L+1)
+    Dim = len(x0)
+    Phi0 = np.eye(Dim, dtype=np.float64).flatten()
+    for i,(t1,t2) in enumerate(zip(tL[:-1], tL[1:])):
+        sol = solve_ivp(dSdt, [t1, t2],
+                        np.append(x_arr[i], Phi0),
+                        method = 'RK45',
+                        max_step = dt,
+                        args = (pf, pjac, Dim))
+        x_arr.append(sol.y[:Dim].T[-1])
+        Phi_arr.append(sol.y[Dim:].T[-1].reshape(Dim, Dim))
+    Phi_arr = np.array(Phi_arr)
+    OSE = np.concatenate((Phi_arr.transpose(0,2,1), np.flip(Phi_arr, axis = 0)))
+    lyap, Q = rec_QR(OSE, T)
+    gc.collect()
+    return lyap
