@@ -1,11 +1,17 @@
 '''
 This example calculates the variation in prediction for a particular
 set of parameters.  Shows the random variation in prediction.
+
+X gives the number of hosts
+
+run: python3 -m charmrun.start ++numHosts X ++processPerHost 1 example_pred_variation.py ++nodelist nodelist.txt +isomalloc_sync
 '''
+from charm4py import charm
 import numpy as np
 import matplotlib.pyplot as plt
 import sys
-from progress.bar import Bar
+from time import time
+from functools import partial
 
 sys.path.insert(1, '../')
 #import reservoir and system code
@@ -22,19 +28,15 @@ def lorenz(n, t, p):
     dXdt = [dxdt, dydt, dzdt]
     return dXdt
 
-def jac(X, t, p):
-    sigma, rho, beta = p
-    x, y, z = X
-    return np.array([[-sigma, sigma, 0],
-                     [-z+rho, -1, -x],
-                     [y, x, -beta]])
 
 def Q(r): return np.hstack((r, np.power(r, 2)))
 
-def dQ(r): return np.concatenate((np.eye(len(r)), 2*np.diag(r)))
+def getPredData(time, res, acc):
+    pred_acc = res.predict(time, acc = acc)
+    x = res.predSysx0
+    return pred_acc, x
 
-if __name__ == '__main__':
-
+def main(args):
     #system parameters/equations
 
     sigma = 10   # Prandlt number
@@ -44,7 +46,7 @@ if __name__ == '__main__':
     D = 3
 
     # build the system from the dynamical equations
-    lor63sys = syst.system(lorenz, (sigma, rho, beta), D, 0.001, fjac = jac)
+    lor63sys = syst.system(lorenz, (sigma, rho, beta), D, 0.001)
 
     #------------------------------------------------------------------------
     #build reservoir
@@ -77,27 +79,37 @@ if __name__ == '__main__':
                    [(0, N//2), (3*N//2, 2*N)]]
 
 
-    num_res = 100 #build 100 reservoirs with the same parameters
-    trials = 10
-    predictions = np.zeros((num_res, trials))
-    with Bar('Processing', max=num_res*trials) as bar:
-        for i in range(num_res):
+    num_res = 10 #build 10 reservoirs with the same parameters
+    trials = 4000
+    predictions = []
+    X = []
+    for i in range(num_res):
+        startTrain = time()
+        #build the reservoir
+        print('initialize res')
+        lor63Res = res.reservoir(params)
 
-            #build the reservoir
-            lor63Res = res.reservoir(params)
+        lor63Res.train(train_time, #time to train the reservoir
+                       train_time_step, #time step over which to train (> integration time step)
+                       Q,
+                       beta,
+                       constraints = constraints)
 
-            lor63Res.train(train_time, #time to train the reservoir
-                           train_time_step, #time step over which to train (> integration time step)
-                           Q,
-                           beta,
-                           constraints = constraints)
+        print(time() - startTrain)
+        startTime = time()
 
-            for j in range(trials):
-                predictions[i][j] = lor63Res.predict(10, show = False)
-                bar.next()
+        remote = partial(getPredData, res = lor63Res, acc = 3)
 
-    np.savetxt('pred_variation.txt', predictions)
+        prediction = np.array(charm.pool.map(remote, 15*np.ones(trials)))
+        predictions.append(prediction[:, 0])
+        X.append(prediction[:, 1])
+        elapsed = time() - startTime
+        print(elapsed)
+
+    print('done')
+    np.savez('pred_variation.npz', pred = predictions, x = X)
+    exit()
 
 
-    
+charm.start(main)
 
