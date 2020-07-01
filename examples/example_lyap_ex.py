@@ -2,11 +2,14 @@
 This example calculates the lyapunov exponents for the predicting
 reservoir.  The algorithm takes a long time and a significant
 amount of memory.
+
+python3 -m charmrun.start ++numHosts X ++processPerHost 1 example_lyap_ex.py ++nodelist nodelist.txt +isomalloc_sync
 '''
 import numpy as np
 import matplotlib.pyplot as plt
 import dill
 import sys
+from time import time
 
 sys.path.insert(1, '../')
 #import reservoir and system code
@@ -32,7 +35,7 @@ def jac(X, t, p):
 
 def Q(r): return np.hstack((r, np.power(r, 2)))
 
-def dQ(r): return np.concatenate((np.eye(len(r)), 2*np.diag(r)))
+def dQ(r): return np.concatenate((np.eye(len(r), dtype = np.float32), 2*np.diag(r)))
 
 if __name__ == '__main__':
 
@@ -52,6 +55,7 @@ if __name__ == '__main__':
     N = 2000
     sigma = 0.014
 
+    res_time_step = 0.001
     # dr/dt = gamma * (-r + tanh(M*r+Win*u))
     params = {'name': 'Lor63_N2000',
               'N': N, #number of neurons
@@ -63,7 +67,7 @@ if __name__ == '__main__':
               'M_SR': 0.9, #M connectivity matrix spectral radius
               'Win_a': -sigma, #Win input matrix lower bound
               'Win_b': sigma, #Win input matrix upper bound
-              'time_step': 0.001, #integration time step for reservoir
+              'time_step': res_time_step, #integration time step for reservoir
               'spinup_time': 40, #time it takes to synchronize res with sys
               'system': lor63sys, #system to run reservoir over
               'saveplots': False} #save the plots
@@ -81,18 +85,19 @@ if __name__ == '__main__':
                    [(0, N//2), (3*N//2, 2*N)]]
 
     print('training')
+    startTime = time()
     lor63Res.train(train_time, #time to train the reservoir
                    train_time_step, #time step over which to train (> integration time step)
                    Q,
                    beta,
                    constraints = constraints)
+    print('finished training in: ', time() - startTime)
 
     lor63Res.setDQ(dQ)
 
-    lor63Res.globalLyap(50, 0.1)
-
-    # lor63Res.plotLE(10)
-    with open(lor63Res.name+'.pkl', 'wb') as file:
-        dill.dump(lor63Res, file)
-    
+    print('computing lyapunov spectrum')
+    startTime = time()
+    lor63Res.globalLyap_TLM(25, 0.01)
+    print('computed exponents in: ', time() - startTime)
+    np.savez('LE.npz', LE = lor63Res.LE, t = lor63Res.LE_t)
 
