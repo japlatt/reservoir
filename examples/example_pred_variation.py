@@ -81,6 +81,7 @@ def main(args):
 
     num_res = 10 #build 10 reservoirs with the same parameters
     trials = 4000
+    
     predictions = []
     X = []
     for i in range(num_res):
