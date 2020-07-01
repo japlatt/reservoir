@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 from scipy.integrate import odeint
 from scipy.integrate import solve_ivp
 from progress.bar import Bar
+from scipy.interpolate import interp1d
 import gc
 
 
@@ -96,6 +97,92 @@ def KY_dim(LE):
         if temp < 0: break
         lyap_sum = temp
     return j+lyap_sum/abs(LE[j])
+
+
+
+###### GLOBAL EXP TLM #######################
+
+def computeLE_TLM(x, t, fjac, pjac, rescale_interval = 10):
+    maxit, D = np.shape(x)
+    I = np.eye(D, dtype = np.float32)
+    M2 = np.eye(D, dtype = np.float32)
+
+    # Compute linear propagator for each timestep
+    LE = np.zeros((int(maxit/rescale_interval), D), dtype = np.float32)
+    t_arr = []
+    l = 0
+    with Bar('Processing', max=maxit/rescale_interval) as bar:
+        for i in range(maxit):
+            dt = t[i+1] - t[i] if (i < maxit-1) else t[-1] - t[-2]
+
+            # Evaluate Jacobian
+            Df = fjac(x[i], t[i], pjac)
+
+            # Compute approximate linear propagator
+            M = I + Df*dt
+            M2 = np.dot(M, M2)
+
+
+            # Rescale via QR decomposition
+            if (np.mod(i+1,rescale_interval)==0):
+                Q,R = np.linalg.qr(M2)
+                
+                # Store the R matrices
+                LE[l] = np.abs(np.diag(R))
+                M2 = Q
+                l+=1
+                t_arr.append(t[i])
+                bar.next()
+
+    LE = np.cumsum(np.log(LE), axis=0) / np.tile(t_arr,(D,1)).T
+    return LE
+
+
+
+# def get_R(x0, t1, t2, f, fjac, dt, pf, pjac):    
+#     def dPhi_dt(Phi, t, x, pjac, Dim):
+#         """ The variational equation """
+#         rPhi = np.reshape(Phi, (Dim, Dim))
+#         rdPhi = np.dot(fjac(x, t, pjac), rPhi)
+#         return rdPhi.flatten()
+
+#     def dSdt(t, S, pf, pjac, Dim):
+#         """
+#         Differential equations for combined state/variational matrix
+#         propagation. This combined state is called S.
+        
+#         p must have the dimension as the last element
+#         """
+#         x = S[:Dim]
+#         Phi = S[Dim:]
+#         return np.append(f(x, t, pf), dPhi_dt(Phi, t, x, pjac, Dim))
+
+
+#     D = len(x0)
+#     Phi0 = np.eye(D).flatten()
+#     S0= np.append(x0, Phi0)
+
+#     sol = odeint(dSdt,
+#                  S0,
+#                  np.arange(t1, t2, dt),
+#                  args = (pf, pjac, D),
+#                  tfirst = True)
+
+#     x = sol[-1][:D]
+#     rPhi = sol[-1][D:].reshape(D, D)
+    
+#     # perform QR decomposition on Phi
+#     Q,R = np.linalg.qr(rPhi)
+#     return np.abs(np.diag(R))
+
+
+# def RtoLyap(R, t, D):
+#     LE = np.cumsum(np.log(R),axis=0) / np.tile(t[1:],(D,1)).T
+#     return np.sort(LE[-1])[::-1]
+
+
+
+
 
 
 ###### LOCAL EXPONENTS ###########################

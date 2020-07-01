@@ -145,7 +145,7 @@ class reservoir:
     pred_time: time to check the prediction
     acc: accuracy for determining predictive power
     '''
-    def predict(self, pred_time, acc = 1, show = True):
+    def predict(self, pred_time, acc = 1, show = False):
         assert(self.train_data is not None), 'must train the model first'
 
         x0, U, spinup = self.__spinup(pred_time)
@@ -189,9 +189,6 @@ class reservoir:
         return self.pred_acc
 
 
-
-
-
     '''
     Define the derivative of the Q function.  Needs to be only a function of r, the state
     of the reservoir.  For example
@@ -231,6 +228,30 @@ class reservoir:
 
         return np.sort(self.system.LE[-1])[::-1], LE[-1]
 
+
+    def globalLyap_TLM(self, time, dt):
+        assert(self.train_data is not None), 'Need to train the reservoir to find Lyapunov Exponents'
+        assert(self.dQ is not None), 'set DQ before running globalLyap'
+
+        t = np.arange(0, time, self.time_step)
+        x, U = self.integrate(time)
+
+        self.system.globalLyap(time, dt, x0 = np.array([u(0) for u in U]))
+
+        pjac = (self.Q, self.dQ, np.float32(self.gamma), np.float32(self.M),
+                np.float32(self.Win), np.float32(self.Wout))
+
+        rescale = int(dt/self.time_step)
+        LE = lyap.computeLE_TLM(np.float32(x), np.float32(t), self.__pred_jac, pjac, rescale_interval = rescale)
+        # t = t[::rescale]
+
+        # LE = lyap.getExp(LE, t, self.N)
+
+        self.LE = LE
+        self.LE_t = t
+
+        return np.sort(self.system.LE[-1])[::-1], LE[-1]
+
     '''
     Plot the calculated Lyapunov exponents
     '''
@@ -250,6 +271,30 @@ class reservoir:
         return lyap.KY_dim(self.LE)
 
 
+    def integrate(self, time):
+        self.system.integrate(-2*self.trans_time, time+self.trans_time)
+        U = self.system.getU()
+        trans = odeint(self.__listening,
+                     np.random.rand(self.N),
+                     np.arange(-self.trans_time, 0, self.time_step),
+                     args = ((U, self.gamma, self.M, self.Win),))
+        sol = odeint(self.__listening,
+                     np.random.rand(self.N),
+                     np.arange(0, time, self.time_step),
+                     args = ((U, self.gamma, self.M, self.Win),))
+        return sol, U
+
+    def getListening(self):
+        return self.__listening
+
+    def getPredicting(self):
+        return self.__predicting
+
+    def getInpJac(self):
+        return self.__input_jac
+
+    def getPredJac(self):
+        return self.__pred_jac
 
     ###### PRIVATE FUNCTIONS ###############################
 
@@ -401,11 +446,13 @@ class reservoir:
         MR = np.dot(M, r)
         q = Q(r).T
         dq = dQ(r)
-        WU = np.linalg.multi_dot((Win, Wout, q))
-        S = np.diag(1 - np.tanh(MR+WU)**2)
-        Wuhat = np.linalg.multi_dot((Win, Wout, dq))
-        dfdr = gamma*(-np.eye(N)+np.dot(S, M+Wuhat))
-        return dfdr
+        # WU = np.linalg.multi_dot((Win, Wout, q))
+        WU = Win.dot(np.dot(Wout, q))
+        S = sparse.diags(1 - np.tanh(MR+WU)**2)
+        # Wuhat = np.linalg.multi_dot((Win, Wout, dq))
+        Wuhat = Win.dot(np.dot(Wout, dq))
+        dfdr = gamma*(-np.eye(N, dtype = np.float32)+S.dot(M+Wuhat))
+        return dfdr.astype(np.float32)
 
 
     '''
