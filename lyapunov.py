@@ -78,7 +78,7 @@ def plotNLyapExp(LE, t, num_exp, fig, ax):
 
     colors = ['dodgerblue']*num_exp 
     for i in range(num_exp): 
-        ax.plot(t[1:], LE[:,i], color=colors[i%4], label=r'$\lambda_{%d}$'%(i+1,), lw=1.2)
+        ax.plot(t, LE[:,i], color=colors[i%4], label=r'$\lambda_{%d}$'%(i+1,), lw=1.2)
     ax.set_ylabel(r'$\lambda$', size=14) 
     ax.set_xlabel(r'$t$', size=14) 
     ax.set_title('%d largest Lyapunov exponents'%(num_exp,)) 
@@ -86,13 +86,12 @@ def plotNLyapExp(LE, t, num_exp, fig, ax):
 
 '''
 Kaplan-Yorke dimension of the system
+
+
 '''
 def KY_dim(LE):
-    LE = LE[-1]
-    j = -1
     lyap_sum = 0
-    for l in LE:
-        j+=1
+    for j, l in enumerate(LE):
         temp = lyap_sum+l
         if temp < 0: break
         lyap_sum = temp
@@ -102,15 +101,17 @@ def KY_dim(LE):
 
 ###### GLOBAL EXP TLM #######################
 
-def computeLE_TLM(x, t, fjac, pjac, rescale_interval = 10):
+def computeLE_TLM(x, t, fjac, pjac, name, rescale_interval = 10, num_save = -1, savetxt = False):
     maxit, D = np.shape(x)
     I = np.eye(D, dtype = np.float32)
     M2 = np.eye(D, dtype = np.float32)
 
-    # Compute linear propagator for each timestep
+    if num_save < 0: num_save = D
+    if savetxt: f = open(name+'_LE.txt', 'bw+')
+
     LE = np.zeros((int(maxit/rescale_interval), D), dtype = np.float32)
-    t_arr = []
     l = 0
+    prev_R = np.zeros(D)
     with Bar('Processing', max=maxit/rescale_interval) as bar:
         for i in range(maxit):
             dt = t[i+1] - t[i] if (i < maxit-1) else t[-1] - t[-2]
@@ -126,80 +127,41 @@ def computeLE_TLM(x, t, fjac, pjac, rescale_interval = 10):
             # Rescale via QR decomposition
             if (np.mod(i+1,rescale_interval)==0):
                 Q,R = np.linalg.qr(M2)
-                
-                # Store the R matrices
-                LE[l] = np.abs(np.diag(R))
-                M2 = Q
+
+                curr_R = np.log(np.abs(np.diag(R)))
+                LE[l] = (prev_R+curr_R)/t[i]
+                prev_R += curr_R
+
+                #save concurrently
+                if savetxt:
+                    np.savetxt(f, [LE[l][:num_save]])
+                    f.flush()
+
+                M2 = Q #rescale M2
                 l+=1
-                t_arr.append(t[i])
                 bar.next()
-
-    LE = np.cumsum(np.log(LE), axis=0) / np.tile(t_arr,(D,1)).T
-    return LE
-
-
-
-# def get_R(x0, t1, t2, f, fjac, dt, pf, pjac):    
-#     def dPhi_dt(Phi, t, x, pjac, Dim):
-#         """ The variational equation """
-#         rPhi = np.reshape(Phi, (Dim, Dim))
-#         rdPhi = np.dot(fjac(x, t, pjac), rPhi)
-#         return rdPhi.flatten()
-
-#     def dSdt(t, S, pf, pjac, Dim):
-#         """
-#         Differential equations for combined state/variational matrix
-#         propagation. This combined state is called S.
-        
-#         p must have the dimension as the last element
-#         """
-#         x = S[:Dim]
-#         Phi = S[Dim:]
-#         return np.append(f(x, t, pf), dPhi_dt(Phi, t, x, pjac, Dim))
-
-
-#     D = len(x0)
-#     Phi0 = np.eye(D).flatten()
-#     S0= np.append(x0, Phi0)
-
-#     sol = odeint(dSdt,
-#                  S0,
-#                  np.arange(t1, t2, dt),
-#                  args = (pf, pjac, D),
-#                  tfirst = True)
-
-#     x = sol[-1][:D]
-#     rPhi = sol[-1][D:].reshape(D, D)
-    
-#     # perform QR decomposition on Phi
-#     Q,R = np.linalg.qr(rPhi)
-#     return np.abs(np.diag(R))
-
-
-# def RtoLyap(R, t, D):
-#     LE = np.cumsum(np.log(R),axis=0) / np.tile(t[1:],(D,1)).T
-#     return np.sort(LE[-1])[::-1]
-
-
-
-
+    if savetxt > 0: f.close()
+    return LE[:, :num_save], KY_dim(LE[-1])
 
 
 ###### LOCAL EXPONENTS ###########################
 
 '''
 Perform a recursive QR decomposition on a matrix
-A = [A(L), A(L-1),...,A(1)] in order to find the
+
+A: [A(L), A(L-1),...,A(1)] in order to find the
 eigenvalues of A in a numerically stable way in the 
 case that A is ill-conditioned.
 
-num_it = the number of times to perform recursion.
-abs(Q) should be arbitrarily close to the identity matrix.
+T: time over which to compute the LLE
+
+num_it: the number of times to perform recursion.
+
 
 returns:
 lRQR = lyapunov exponents from max to min
 Q = need to check if this is close to identity matrix.
-Up to a minus sign.
+Up to a minus sign. abs(Q) should be arbitrarily close to the identity matrix.
 '''
 def rec_QR(A, T, num_it = 5):
     M_arr = A
@@ -223,13 +185,16 @@ def rec_QR(A, T, num_it = 5):
 '''
 Compute the local lyapunov expoenents (LLE) of a given system.
 
-x0 = point at which to calculate the LLE
-T = time over which to compute the LLE
-L = number of steps
-dt = integration time step
-pf = parameters of system
+x0: point at which to calculate the LLE
+f: dynamical system
+fjac: jacobian
+pf: parameters of system
+pjac: parameters of jacobian
+T: time over which to compute the LLE
+L: number of steps
+dt: integration time step
 
-return lyapunov exponents
+return local lyapunov exponents
 '''
 def LLE(x0, f, fjac, pf, pjac, T, L, dt):
 

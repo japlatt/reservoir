@@ -1,9 +1,19 @@
+'''
+To Implement:
+1) Win sparse matrix
+2) False nearest neighbors (FNN)
+3) mutual FNN
+
+'''
+
 import numpy as np
 from scipy.stats import uniform
 from scipy.integrate import odeint
 import scipy.sparse as sparse
 import matplotlib.pyplot as plt
 import lyapunov as lyap
+
+plt.style.use('seaborn')
 
 class reservoir:
 
@@ -48,6 +58,8 @@ class reservoir:
                                       self.D,
                                       a = params['Win_a'],
                                       b = params['Win_b'])
+        self.Win = np.float32(self.Win)
+
         self.system = params['system']
 
         self.Q = None
@@ -63,6 +75,7 @@ class reservoir:
         self.LE = None
         self.LE_system = None
         self.LE_t = None
+        self.KY_dim = None
 
         self.pred_acc = None
 
@@ -89,11 +102,11 @@ class reservoir:
         x0, self.Utrain, _ = self.__spinup(train_time)
         train = odeint(self.__listening,
                        x0,
-                       np.arange(0, train_time, self.time_step),
+                       np.arange(0, train_time, self.time_step, dtype = np.float32),
                        args = ((self.Utrain , self.gamma, self.M, self.Win),))
 
 
-        self.train_t = np.arange(0, train_time, train_time_step)
+        self.train_t = np.arange(0, train_time, train_time_step, dtype = np.float32)
         data = train[::int(train_time_step/self.time_step)]
 
         self.Q = Q
@@ -103,7 +116,7 @@ class reservoir:
         if get_jac:
             Jac_est, Jac = self.__get_train_jac(data)
             return data, Jac_est, Jac
-        return data, None, None
+        return data
 
     '''
     Plot the training data to compare to the true system
@@ -145,17 +158,18 @@ class reservoir:
     pred_time: time to check the prediction
     acc: accuracy for determining predictive power
     '''
-    def predict(self, pred_time, acc = 1, show = False):
+    def predict(self, pred_time, acc = None, show = False, retDat = False):
         assert(self.train_data is not None), 'must train the model first'
+        if acc == None: acc = self.D
 
         x0, U, spinup = self.__spinup(pred_time)
 
-        self.predSysx0 = np.array([u(0) for u in U])
+        self.predSysx0 = np.array([u(0) for u in U], dtype = np.float32)
 
         p = (self.gamma, self.M, self.Win, self.Wout, self.Q)
-        self.pred_t = np.arange(0, pred_time, self.time_step)
+        self.pred_t = np.arange(0, pred_time, self.time_step, dtype = np.float32)
         pred = odeint(self.__predicting,
-                       x0,
+                       np.float32(x0),
                        self.pred_t,
                        args = (p,))
 
@@ -176,7 +190,7 @@ class reservoir:
         self.pred_acc = pred_acc-self.pred_t[0]
 
 
-        if show:
+        if show or self.ifsave:
             fig, ax = plt.subplots(self.D, 1, sharex = True, figsize = (10, 7))
             t_spin = np.arange(-min(self.trans_time/2, 10), 0, self.time_step)
             spin = np.dot(self.Wout, self.Q(spinup).T)
@@ -184,8 +198,11 @@ class reservoir:
             self.__plotPred(fig, ax, U, u_pred, spin.T,
                             t_spin, self.pred_t, self.D)
             for k in range(self.D): ax[k].axvline(pred_acc, linestyle = '--')
-            if self.ifsave: fig.savefig(self.name+'_pred.pdf', bbox_inches = 'tight')
-            plt.show()
+            ax[-1].set_xlabel('Time', fontsize = 16)
+            ax[0].set_title(self.name+' Prediction', fontsize = 20)
+            if self.ifsave: fig.savefig(self.name+'_pred.png', bbox_inches = 'tight')
+            if show: plt.show()
+        if retDat: return self.pred_acc, u_pred, np.array([u(self.pred_t) for u in U])
         return self.pred_acc
 
 
@@ -202,6 +219,9 @@ class reservoir:
             
 
     '''
+    ########### SLOW FUNCTION #############
+    USE globalLyap_TLM instead
+
     Compute the global lyapunov exponents using QR factorization method.
 
     time: as time-> large the accuracy of the lyap estimation increases
@@ -216,7 +236,7 @@ class reservoir:
 
         t = np.arange(0, time, dt)
 
-        self.system.globalLyap(time, dt, x0 = np.array([u(0) for u in U]))
+        self.system.globalLyap(time, dt, x0 = np.array([u(0) for u in U], dtype = np.float32))
 
         p_list = (U, self.gamma, self.M, self.Win)
         p_jac = (self.Q, self.dQ, self.gamma, self.M, self.Win, self.Wout)
@@ -226,31 +246,64 @@ class reservoir:
         self.LE = LE
         self.LE_t = t
 
+        self.KY_dim = lyap.KY_dim(LE)
+
         return np.sort(self.system.LE[-1])[::-1], LE[-1]
 
+    '''
+    Compute the global lyapunov exponents using QR factorization method.  Uses
+    a Tangent Linear Model (TLM) to solve the variational equations.  Should
+    be much faster but maybe less accurate than globalLyap.
 
-    def globalLyap_TLM(self, time, dt):
+    time: as time-> large the accuracy of the lyap estimation increases
+    dt: resolution over which to copute the lyap exp, make small to reveal
+        fine structure in local variations
+    num_save: number of exponents to save.  -1 means you save all of them.
+    save_txt: save txt file of num_save exponents concurrently with calculation
+    '''
+    def globalLyap_TLM(self, time, dt, num_save = -1, savetxt = False):
         assert(self.train_data is not None), 'Need to train the reservoir to find Lyapunov Exponents'
         assert(self.dQ is not None), 'set DQ before running globalLyap'
 
-        t = np.arange(0, time, self.time_step)
+        t = np.arange(0, time, self.time_step, dtype = np.float32)
         x, U = self.integrate(time)
 
-        self.system.globalLyap(time, dt, x0 = np.array([u(0) for u in U]))
+        self.system.globalLyap(time, dt, x0 = np.array([u(0) for u in U], dtype = np.float32))
 
-        pjac = (self.Q, self.dQ, np.float32(self.gamma), np.float32(self.M),
-                np.float32(self.Win), np.float32(self.Wout))
+        pjac = (self.Q, self.dQ, np.float32(self.gamma), self.M,
+                self.Win, self.Wout)
 
         rescale = int(dt/self.time_step)
-        LE = lyap.computeLE_TLM(np.float32(x), np.float32(t), self.__pred_jac, pjac, rescale_interval = rescale)
-        # t = t[::rescale]
-
-        # LE = lyap.getExp(LE, t, self.N)
-
+        LE, self.KY_dim = lyap.computeLE_TLM(np.float32(x),
+                                             t,
+                                             self.__pred_jac,
+                                             pjac,
+                                             self.name,
+                                             rescale_interval = rescale,
+                                             num_save = num_save,
+                                             savetxt = savetxt)
         self.LE = LE
-        self.LE_t = t
+        self.LE_t = t[::rescale]
 
         return np.sort(self.system.LE[-1])[::-1], LE[-1]
+
+
+    def CLE(self, time, dt):
+        assert(self.train_data is not None), 'Need to train the reservoir to find Lyapunov Exponents'
+
+        t = np.arange(0, time, self.time_step, dtype = np.float32)
+        x, U = self.integrate(time)
+
+        pjac = (U, self.gamma, self.Q, self.M, self.Win, self.Wout)
+        
+        rescale = int(dt/self.time_step)
+        LE, KY_dim = lyap.computeLE_TLM( np.float32(x),
+                                         t,
+                                         self.__list_jac,
+                                         pjac,
+                                         self.name,
+                                         rescale_interval = rescale)
+        return LE[-1]
 
     '''
     Plot the calculated Lyapunov exponents
@@ -262,13 +315,16 @@ class reservoir:
         fig,ax = plt.subplots(1,1,sharex=True) 
         lyap.plotNLyapExp(self.LE, t, num_exp, fig, ax)
         for i in range(max(2, np.sum(LE_system[-1] > -2))): 
-            plt.plot(self.system.LE_t[1:], LE_system[:,i], 'r--')
+            plt.plot(self.system.LE_t, LE_system[:,i], 'r--')
         if self.ifsave: fig.savefig(self.name+'_LE.pdf', bbox_inches = 'tight')
         if show: plt.show()
 
+    '''
+    Kaplan-Yorke dimension of the reservoir
+    '''
     def getKYDim(self):
-        assert(self.LE is not None), 'run globalLyap first'
-        return lyap.KY_dim(self.LE)
+        assert(self.KY_dim is not None), 'run globalLyap first'
+        return self.KY_dim
 
 
     def integrate(self, time):
@@ -296,6 +352,9 @@ class reservoir:
     def getPredJac(self):
         return self.__pred_jac
 
+    def getSpinup(self):
+        return self.__spinup
+
     ###### PRIVATE FUNCTIONS ###############################
 
 
@@ -310,8 +369,8 @@ class reservoir:
         U = self.system.getU() 
 
         spinup = odeint(self.__listening,
-                       np.random.rand(self.N),
-                       np.arange(-self.trans_time, 0, self.time_step),
+                       np.random.rand(self.N).astype(np.float32),
+                       np.arange(-self.trans_time, 0, self.time_step, dtype = np.float32),
                        args = ((U, self.gamma, self.M, self.Win),))
 
         return spinup[-1], U, spinup
@@ -328,8 +387,6 @@ class reservoir:
             ax[i].plot(t, u, 'b-', linewidth = 2, label = 'True')
             ax[i].plot(t, u_pred[i], 'r--',linewidth = 2, label = 'Prediction')
             ax[i].axvline(0, color = 'k', lw = 2)
-        ax[i].set_xlabel('Time', fontsize = 16)
-        ax[0].set_title('Predicting Data', fontsize = 20)
         plt.legend()
 
     '''
@@ -343,6 +400,7 @@ class reservoir:
     '''
     def __getWout(self, t, data, beta, constraints):
         dataQ = self.Q(data)
+        assert(dataQ.shape[0] == len(t))
 
         #if constraints are not given then solve for all values
         if constraints == None:
@@ -355,7 +413,6 @@ class reservoir:
 
         #decompose matrix multiplication into D linear problems
         for i in range(self.D):
-
             #apply constraints to the data
             for j, c in enumerate(constraints[i]):
                 if j == 0: data_mod = dataQ.T[c[0]:c[1]]
@@ -373,7 +430,7 @@ class reservoir:
                 end = start+c[1]-c[0]
                 Wout[i, c[0]:c[1]] = Wi[start:end]
         self.rmsd = self.__rmsd(dataQ, u, beta, Wout)
-        return np.array(Wout, order = 'C')
+        return np.array(Wout, order = 'C', dtype = np.float32)
 
 
     '''
@@ -388,50 +445,66 @@ class reservoir:
 
     '''
     equations for the listening reservoir to be solved by solve_ivp
-    dr/dt = gamma * (-r + tanh(M*r+Win*u))
+    dr/dt = gamma * (-r + tanh(M.r+Win.u))
     '''
     @staticmethod
     def __listening(r, t, p):
         U, gamma, M, Win = p
-        MR = np.dot(M, r)
-        WU = np.dot(Win, np.array([u(t) for u in U]))
+        MR = M.dot(r)
+        WU = np.dot(Win, np.array([u(t) for u in U], dtype = np.float32))
         r = gamma * (-r + np.tanh(MR+WU))
         return r
 
-    '''Jacobian of __listening with respect to u'''
+    '''Jacobian of __listening with respect to u in the dimension of u'''
     @staticmethod
     def __input_jac(r, t, p):
         U, gamma, Q, M, Win, Wout = p
-        MR = np.dot(M, r)
-        WU = np.dot(Win, np.array([u(t) for u in U]))
+        MR = M.dot(r)
+        WU = np.dot(Win, np.array([u(t) for u in U], dtype = np.float32))
         S = 1 - np.tanh(MR+WU)**2
         J = []
         for s in S.T:
-            sW = np.dot(np.diag(s),Win)
+            sW = sparse.diags(s).dot(Win)
             J.append(np.dot(Wout, sW))
         return np.array(J)
 
+    '''Jacobian of __listening with respect to r'''
+    @staticmethod
+    def __list_jac(r, t, p):
+        U, gamma, Q, M, Win, Wout = p
+        N = len(r)
+        MR = M.dot(r)
+        WU = np.dot(Win, np.array([u(t) for u in U], dtype = np.float32))
+        S = sparse.diags(1 - np.tanh(MR+WU)**2)
+        dfdr = gamma*(-np.eye(N)+S.dot(M))
+        return dfdr.astype(np.float32)
 
+
+    '''
+    get the mapped jacobian with respect to u for the listening reservoir and compare to the
+    actual jacobian of the dynamical system in the dimension of u.
+    '''
     def __get_train_jac(self, data):
         assert(self.system.fjac is not None), 'set fjac for system'
         Jac_est = self.__input_jac(data.T, self.train_t,
                                    (self.Utrain, self.gamma,
                                     self.Q, self.M, self.Win, self.Wout))
 
-        X = np.array([u(self.train_t) for u in self.Utrain])
+        X = np.array([u(self.train_t) for u in self.Utrain], dtype = np.float32)
         Jac = np.zeros((len(self.train_t), self.D, self.D))
         for i in range(len(self.train_t)):
             Jac[i] = self.system.fjac(X[:, i], self.train_t[i], self.system.p)
         return Jac_est, Jac
 
-    '''predicting reservoir
-    dr/dt = gamma * (-r + tanh(M*r+Win*Wout*Q(r)))
+    '''
+    predicting reservoir
+    dr/dt = gamma * (-r + tanh(M.r+Win.Wout.Q(r)))
     '''
     @staticmethod
     def __predicting(r, t, p):
         gamma, M, Win, Wout, Q = p
         u_pred = np.dot(Wout, Q(r).T)
-        MR = np.dot(M, r)
+        MR = M.dot(r)
         WU = np.dot(Win, u_pred)
         r = gamma * (-r + np.tanh(MR+WU))
         return r
@@ -443,7 +516,7 @@ class reservoir:
     def __pred_jac(r, t, p):
         Q, dQ, gamma, M, Win, Wout = p
         N = len(r)
-        MR = np.dot(M, r)
+        MR = M.dot(r)
         q = Q(r).T
         dq = dQ(r)
         # WU = np.linalg.multi_dot((Win, Wout, q))
@@ -473,7 +546,7 @@ class reservoir:
         #rescale to specified spectral radius
         SRM = np.abs(sparse.linalg.eigs(M, k = 1, which='LM', return_eigenvectors=False))
         M = M.multiply(SR/SRM)
-        return np.squeeze(np.asarray(M.todense(), order = 'C'))
+        return M #np.squeeze(np.asarray(M.todense(), order = 'C'))
 
 
 

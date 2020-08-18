@@ -27,11 +27,14 @@ class system:
         self.dt = dt
         self.U = None
         self.T = None
+        self.sample = None
         self.LE = None
         self.min_emb = None
         self.t = np.arange(0, 1000*dt, dt)
-        self.u = odeint(self.f, np.random.rand(self.D), self.t,
-                   args = (self.p,))
+        self.u = odeint(self.f,
+                        np.random.rand(self.D),
+                        self.t,
+                        args = (self.p,))
 
 
     '''
@@ -41,11 +44,12 @@ class system:
     tend: end time
     tstep: time step for integration
     '''
-    def integrate(self, tstart, tend, tstep = None):
+    def integrate(self, tstart, tend, tstep = None, x0 = None):
         assert(tstart < tend), 'start needs to be before end'
         if tstep is not None: self.dt = tstep
-        x0 = self.u[np.random.choice(self.u.shape[0], 1, replace=False)].squeeze()
-        x0 += np.random.rand(self.D)
+        if x0 is None:
+            x0 = self.u[np.random.choice(self.u.shape[0], 1, replace=False)].squeeze()
+            x0 += np.random.rand(self.D)
         t = np.arange(tstart, tend, self.dt)
         u = odeint(self.f, x0, t,
                    args = (self.p,))
@@ -54,6 +58,15 @@ class system:
 
         return t, u
 
+
+    def plot(self):
+        assert(self.u is not None)
+        fig, ax = plt.subplots(self.D, 1, sharex = True, figsize = (8, 8))
+        for i, a in enumerate(ax):
+            a.plot(self.t, self.u[:, i])
+            a.set_ylabel(r'$x_{:d}$'.format(i), fontsize = 16)
+        a.set_xlabel('time', fontsize = 16)
+        plt.show()
 
 
     '''
@@ -87,7 +100,7 @@ class system:
 
     Ref: Analysis of Observed Chaotic Data, Abarbanel 1996
     '''
-    def findMinAMI(self, time_lag, u_ind = 0, num_bins = None):
+    def findMinAMI(self, time_lag, sample = 1, u_ind = 0, num_bins = None):
         assert(self.u is not None), 'run integrate function first'
         lag = np.arange(1, int(time_lag/self.dt)+1)
         ui = self.u[:, u_ind]
@@ -108,6 +121,7 @@ class system:
         print('Enter a number up to search for first minimum')
         end_search = int(input('end search: '))
         self.T = np.argmin(MI[0:end_search])
+        self.sample = sample
         print('The first min of MI is: T={:d}'.format(self.T))
         return self.T
 
@@ -129,7 +143,7 @@ class system:
         assert(self.u is not None), 'run integrate function first'
         assert(self.T is not None), 'call findMinAMI before running FNN'
         NFNN = np.zeros(nDim)
-        x = self.u[:, u_ind]
+        x = self.u[:, u_ind][::self.sample]
         y = x[:-nDim*self.T-1]
         for i in range(nDim):
             y2 = np.vstack((y, x[(i+1)*self.T:-self.T*nDim+(i+1)*self.T-1]))
@@ -174,29 +188,54 @@ class system:
         fine structure in local variations
     x0: point at which to start computation of global exp
     '''
+    # def globalLyap(self, time, dt, x0 = None):
+    #     assert(self.fjac is not None), 'Need to provide jacobian for lyapunov expononents'
+    #     if x0 is None:
+    #         assert(self.u is not None), 'run integrate function first'
+    #         x0 = self.u[-1]
+    #     t = np.arange(0, time, dt)
+        
+    #     LE = lyap.computeLE(self.f, self.fjac, t, self.dt, self.p, self.p, x0, self.D)
+
+    #     self.LE = LE
+    #     self.LE_t = t[1:]
+
+    #     return LE[-1]
     def globalLyap(self, time, dt, x0 = None):
         assert(self.fjac is not None), 'Need to provide jacobian for lyapunov expononents'
         if x0 is None:
             assert(self.u is not None), 'run integrate function first'
             x0 = self.u[-1]
-        t = np.arange(0, time, dt)
         
-        LE = lyap.computeLE(self.f, self.fjac, t, self.dt, self.p, self.p, x0, self.D)
+        t, u = self.integrate(0, time, x0 = x0)
+
+        rescale = int(dt/self.dt)
+        LE, self.KY_dim = lyap.computeLE_TLM(np.float32(u),
+                                             t,
+                                             self.fjac,
+                                             self.p,
+                                             'system',
+                                             rescale_interval = rescale,
+                                             num_save = -1,
+                                             savetxt = False)
 
         self.LE = LE
-        self.LE_t = t
+        self.LE_t = t[::rescale]
 
         return LE[-1]
 
     '''
     plot num_exp number of exponents over
     '''
-    def plotLE(self, num_exp):
+    def plotLE(self, num_exp, save_name = None):
         assert(self.LE is not None), 'run globalLyap first'
         LE = self.LE
         t = self.LE_t
         fig,ax = plt.subplots(1,1,sharex=True) 
         lyap.plotNLyapExp(LE, t, num_exp, fig, ax)
+        if save_name is not None:
+            assert(isinastance(save_name, str))
+            fig.savefig(save_name+'.pdf', bbox_inches = 'tight')
         plt.show()
 
 
@@ -205,7 +244,7 @@ class system:
     '''
     def getKYDim(self):
         assert(self.LE is not None), 'run globalLyap first'
-        return lyap.KY_dim(self.LE)
+        return lyap.KY_dim(self.LE[-1])
 
 
     '''
