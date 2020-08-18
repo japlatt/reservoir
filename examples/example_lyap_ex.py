@@ -1,9 +1,6 @@
 '''
 This example calculates the lyapunov exponents for the predicting
-reservoir.  The algorithm takes a long time and a significant
-amount of memory.
-
-python3 -m charmrun.start ++numHosts X ++processPerHost 1 example_lyap_ex.py ++nodelist nodelist.txt +isomalloc_sync
+reservoir.  The algorithm takes a long time (2.5 hours on my machine).
 '''
 import numpy as np
 import matplotlib.pyplot as plt
@@ -68,7 +65,7 @@ if __name__ == '__main__':
               'Win_a': -sigma, #Win input matrix lower bound
               'Win_b': sigma, #Win input matrix upper bound
               'time_step': res_time_step, #integration time step for reservoir
-              'spinup_time': 40, #time it takes to synchronize res with sys
+              'spinup_time': 20, #time it takes to synchronize res with sys
               'system': lor63sys, #system to run reservoir over
               'saveplots': False} #save the plots
 
@@ -97,7 +94,7 @@ if __name__ == '__main__':
 
     print('computing lyapunov spectrum')
     startTime = time()
-    lor63Res.globalLyap_TLM(25, 0.01)
+    lor63Res.globalLyap_TLM(30, 10*res_time_step, num_save = 3, savetxt = False)
     print('computed exponents in: ', time() - startTime)
-    np.savez('LE.npz', LE = lor63Res.LE, t = lor63Res.LE_t)
-
+    with open(lor63Res.name+'_LE.pkl', 'wb+') as f:
+        dill.dump(lor63Res, f)
