@@ -77,10 +77,7 @@ class system:
     '''
     def getU(self):
         assert(self.u is not None), 'U has not been set, run integrate function first'
-        u_arr = []
-        for i in range(self.D):
-            u_arr.append(interp1d(self.t, self.u[:, i], fill_value="extrapolate"))
-        self.U = u_arr
+        self.U = interp1d(self.t, self.u.T, fill_value="extrapolate", )
         return self.U
 
 
@@ -102,8 +99,8 @@ class system:
     '''
     def findMinAMI(self, time_lag, sample = 1, u_ind = 0, num_bins = None):
         assert(self.u is not None), 'run integrate function first'
-        lag = np.arange(1, int(time_lag/self.dt)+1)
-        ui = self.u[:, u_ind]
+        lag = np.arange(1, int(time_lag/self.dt/sample)+1)
+        ui = self.u[:, u_ind][::sample]
         MI = np.zeros(len(lag))
         if num_bins == None: num_bins = int(np.round(np.log2(len(ui))+1)) #Sturges rule
         for l in lag: MI[l-1] = self.__calc_MI(ui[:-l], ui[l:], num_bins)
@@ -120,7 +117,7 @@ class system:
 
         print('Enter a number up to search for first minimum')
         end_search = int(input('end search: '))
-        self.T = np.argmin(MI[0:end_search])
+        self.T = np.argmin(MI[0:end_search])+1
         self.sample = sample
         print('The first min of MI is: T={:d}'.format(self.T))
         return self.T
@@ -145,29 +142,21 @@ class system:
         NFNN = np.zeros(nDim)
         x = self.u[:, u_ind][::self.sample]
         y = x[:-nDim*self.T-1]
+        y = y.reshape(1, -1)
         for i in range(nDim):
             y2 = np.vstack((y, x[(i+1)*self.T:-self.T*nDim+(i+1)*self.T-1]))
 
-            if i == 0:
-                X = y.reshape(1, -1)
-                Tree = sp.spatial.cKDTree(X.T)
-                dist, inds = Tree.query(X.T, k = 2)
+            Tree = sp.spatial.cKDTree(y.T)
+            dist, inds = Tree.query(y.T, k = 2)
 
-                dist = dist[:,1]**2
-                inds = inds[:, 1]
-
-            else:
-                Tree = sp.spatial.cKDTree(y.T)
-                dist, inds = Tree.query(y.T, k = 2)
-
-                dist = dist[:,1]**2
-                inds = inds[:, 1]
+            dist = dist[:,-1]**2
+            inds = inds[:, -1]
 
             dist2 = np.array([np.linalg.norm(y2.T[i] - y2.T[inds[i]], 2)**2 for i in range(len(y.T))])
 
             f = np.divide(np.abs(dist2-dist),dist)
             f = f > 15**2
-            NFNN[i] = np.sum(f)/(1.0*len(f))
+            NFNN[i] = np.sum(f)/len(f)
             y = y2
 
         print(np.round(NFNN,3)*100)

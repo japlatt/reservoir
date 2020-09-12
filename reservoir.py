@@ -58,7 +58,6 @@ class reservoir:
                                       self.D,
                                       a = params['Win_a'],
                                       b = params['Win_b'])
-        self.Win = np.float32(self.Win)
 
         self.system = params['system']
 
@@ -68,7 +67,7 @@ class reservoir:
 
         self.train_t = None
         self.pred_t = None
-        self.rmsd = None
+        self.cost = None
         self.dQ = None
         self.Utrain = None
 
@@ -111,7 +110,7 @@ class reservoir:
 
         self.Q = Q
         self.Wout = self.__getWout(self.train_t, data, beta, constraints)
-        self.train_data = np.dot(self.Wout, Q(data).T)
+        self.train_data = np.dot(self.Wout, Q(data).T) if Q is not None else np.dot(self.Wout, data.T)
 
         if get_jac:
             Jac_est, Jac = self.__get_train_jac(data)
@@ -123,14 +122,13 @@ class reservoir:
     '''
     def plotTraining(self, show = True):
         assert(self.train_data is not None), 'must train the model first'
-        u = np.array([x(self.train_t) for x in self.Utrain]) #construct u at time points needed
-
+        u = self.Utrain(self.train_t) #construct u at time points needed
         fig, ax = plt.subplots(self.D, 1, sharex = True, figsize = (10, 7))
         for i in range(self.D):
             ax[i].plot(self.train_t, u[i], 'b-', linewidth = 2, label = 'True')
             ax[i].plot(self.train_t, self.train_data[i], 'r--',linewidth = 2, label = 'Estimate')
         ax[i].set_xlabel('Time', fontsize = 16)
-        ax[0].set_title('Training Data: RMSD {:1.2f}'.format(self.rmsd), fontsize = 20)
+        ax[0].set_title('Training Data: cost {:1.2f}'.format(self.cost), fontsize = 20)
         ax[i].legend(loc = 'upper right')
         if self.ifsave: fig.savefig(self.name+'_train.pdf', bbox_inches = 'tight')
         if show: plt.show()
@@ -164,18 +162,18 @@ class reservoir:
 
         x0, U, spinup = self.__spinup(pred_time)
 
-        self.predSysx0 = np.array([u(0) for u in U], dtype = np.float32)
+        self.predSysx0 = U(0)
 
         p = (self.gamma, self.M, self.Win, self.Wout, self.Q)
         self.pred_t = np.arange(0, pred_time, self.time_step, dtype = np.float32)
-        pred = odeint(self.__predicting,
+        pred = odeint(self.predicting,
                        np.float32(x0),
                        self.pred_t,
                        args = (p,))
 
-        u_pred = np.dot(self.Wout, self.Q(pred).T)
-        u = np.array([x(self.pred_t) for x in U]) #construct u at time points needed
+        u_pred = np.dot(self.Wout, self.Q(pred).T) if self.Q is not None else np.dot(self.Wout, pred.T)
 
+        u = U(self.pred_t)#construct u at time points needed
         pred_acc = self.pred_t[-1]
         diff = np.linalg.norm(u.T - u_pred.T, axis = 1)
         self.diff = diff
@@ -193,7 +191,7 @@ class reservoir:
         if show or self.ifsave:
             fig, ax = plt.subplots(self.D, 1, sharex = True, figsize = (10, 7))
             t_spin = np.arange(-min(self.trans_time/2, 10), 0, self.time_step)
-            spin = np.dot(self.Wout, self.Q(spinup).T)
+            spin = np.dot(self.Wout, self.Q(spinup).T) if self.Q is not None else np.dot(self.Wout, spinup.T)
             spin = spin.T[int(len(spin.T) - len(t_spin)):]
             self.__plotPred(fig, ax, U, u_pred, spin.T,
                             t_spin, self.pred_t, self.D)
@@ -202,7 +200,7 @@ class reservoir:
             ax[0].set_title(self.name+' Prediction', fontsize = 20)
             if self.ifsave: fig.savefig(self.name+'_pred.png', bbox_inches = 'tight')
             if show: plt.show()
-        if retDat: return self.pred_acc, u_pred, np.array([u(self.pred_t) for u in U])
+        if retDat: return self.pred_acc, u_pred, U(self.pred_t)
         return self.pred_acc
 
 
@@ -230,13 +228,13 @@ class reservoir:
     '''
     def globalLyap(self, time, dt):
         assert(self.train_data is not None), 'Need to train the reservoir to find Lyapunov Exponents'
-        assert(self.dQ is not None), 'set DQ before running globalLyap'
+        if self.Q is not None: assert(self.dQ is not None), 'set DQ before running globalLyap'
 
         x0, U, _ = self.__spinup(time)
 
         t = np.arange(0, time, dt)
 
-        self.system.globalLyap(time, dt, x0 = np.array([u(0) for u in U], dtype = np.float32))
+        self.system.globalLyap(time, dt, x0 = U(0))
 
         p_list = (U, self.gamma, self.M, self.Win)
         p_jac = (self.Q, self.dQ, self.gamma, self.M, self.Win, self.Wout)
@@ -268,7 +266,7 @@ class reservoir:
         t = np.arange(0, time, self.time_step, dtype = np.float32)
         x, U = self.integrate(time)
 
-        self.system.globalLyap(time, dt, x0 = np.array([u(0) for u in U], dtype = np.float32))
+        self.system.globalLyap(time, dt, x0 = U(0))
 
         pjac = (self.Q, self.dQ, np.float32(self.gamma), self.M,
                 self.Win, self.Wout)
@@ -344,7 +342,7 @@ class reservoir:
         return self.__listening
 
     def getPredicting(self):
-        return self.__predicting
+        return self.predicting
 
     def getInpJac(self):
         return self.__input_jac
@@ -379,12 +377,12 @@ class reservoir:
     '''
     @staticmethod
     def __plotPred(fig, ax, U, u_pred, spinup, t_spin, t, D):
+        u = U(t)
+        u_spin = U(t_spin)
         for i in range(D):
-            u = U[i](t)
-            u_spin = U[i](t_spin)
-            ax[i].plot(t_spin, u_spin, 'b-', linewidth = 2)
+            ax[i].plot(t_spin, u_spin[i], 'b-', linewidth = 2)
             ax[i].plot(t_spin, spinup[i], 'r--', linewidth = 2)
-            ax[i].plot(t, u, 'b-', linewidth = 2, label = 'True')
+            ax[i].plot(t, u[i], 'b-', linewidth = 2, label = 'True')
             ax[i].plot(t, u_pred[i], 'r--',linewidth = 2, label = 'Prediction')
             ax[i].axvline(0, color = 'k', lw = 2)
         plt.legend()
@@ -399,17 +397,20 @@ class reservoir:
                   ex: [[(0, N)], [(0, N)], [(0, N//2), (N, 3*N//2)]]
     '''
     def __getWout(self, t, data, beta, constraints):
-        dataQ = self.Q(data)
+        dataQ = self.Q(data) if self.Q is not None else data
         assert(dataQ.shape[0] == len(t))
 
         #if constraints are not given then solve for all values
         if constraints == None:
             constraints = [[(0, self.N*dataQ.shape[1]//data.shape[1])] for x in range(self.D)]
+
+        self.constraints = constraints
+        self._check_const(dataQ.shape[1]//self.N)
         
         #initialize Wout
         Wout = np.zeros((self.D, self.N*dataQ.shape[1]//data.shape[1]), order = 'C')
 
-        u = np.array([x(t) for x in self.Utrain]) #construct u at time points needed
+        u = self.Utrain(t) #construct u at time points needed
 
         #decompose matrix multiplication into D linear problems
         for i in range(self.D):
@@ -429,7 +430,7 @@ class reservoir:
                 else: start = end 
                 end = start+c[1]-c[0]
                 Wout[i, c[0]:c[1]] = Wi[start:end]
-        self.rmsd = self.__rmsd(dataQ, u, beta, Wout)
+        self.cost = self.__cost(dataQ, u, beta, Wout)
         return np.array(Wout, order = 'C', dtype = np.float32)
 
 
@@ -437,9 +438,9 @@ class reservoir:
     Find the root mean square deviation for the training
     '''
     @staticmethod
-    def __rmsd(q, u, beta, Wout):
+    def __cost(q, u, beta, Wout):
         z = np.dot(Wout, q.T)
-        cst = np.linalg.norm(np.subtract(z,u)/len(u))
+        cst = np.linalg.norm(np.subtract(z,u))**2/u.size
         return cst
 
 
@@ -451,7 +452,7 @@ class reservoir:
     def __listening(r, t, p):
         U, gamma, M, Win = p
         MR = M.dot(r)
-        WU = np.dot(Win, np.array([u(t) for u in U], dtype = np.float32))
+        WU = Win.dot(U(t))
         r = gamma * (-r + np.tanh(MR+WU))
         return r
 
@@ -460,7 +461,7 @@ class reservoir:
     def __input_jac(r, t, p):
         U, gamma, Q, M, Win, Wout = p
         MR = M.dot(r)
-        WU = np.dot(Win, np.array([u(t) for u in U], dtype = np.float32))
+        WU = Win.dot(U(t))
         S = 1 - np.tanh(MR+WU)**2
         J = []
         for s in S.T:
@@ -474,7 +475,7 @@ class reservoir:
         U, gamma, Q, M, Win, Wout = p
         N = len(r)
         MR = M.dot(r)
-        WU = np.dot(Win, np.array([u(t) for u in U], dtype = np.float32))
+        WU = Win.dot(U(t))
         S = sparse.diags(1 - np.tanh(MR+WU)**2)
         dfdr = gamma*(-np.eye(N)+S.dot(M))
         return dfdr.astype(np.float32)
@@ -490,7 +491,7 @@ class reservoir:
                                    (self.Utrain, self.gamma,
                                     self.Q, self.M, self.Win, self.Wout))
 
-        X = np.array([u(self.train_t) for u in self.Utrain], dtype = np.float32)
+        X = self.Utrain(self.train_t)
         Jac = np.zeros((len(self.train_t), self.D, self.D))
         for i in range(len(self.train_t)):
             Jac[i] = self.system.fjac(X[:, i], self.train_t[i], self.system.p)
@@ -501,24 +502,24 @@ class reservoir:
     dr/dt = gamma * (-r + tanh(M.r+Win.Wout.Q(r)))
     '''
     @staticmethod
-    def __predicting(r, t, p):
+    def predicting(r, t, p):
         gamma, M, Win, Wout, Q = p
-        u_pred = np.dot(Wout, Q(r).T)
+        u_pred = np.dot(Wout, Q(r).T) if Q is not None else Wout.dot(r)
         MR = M.dot(r)
-        WU = np.dot(Win, u_pred)
+        WU = Win.dot(u_pred)
         r = gamma * (-r + np.tanh(MR+WU))
         return r
 
     '''
-    Jacobian of __predicting with respect to r
+    Jacobian of predicting with respect to r
     '''
     @staticmethod
     def __pred_jac(r, t, p):
         Q, dQ, gamma, M, Win, Wout = p
         N = len(r)
         MR = M.dot(r)
-        q = Q(r).T
-        dq = dQ(r)
+        q = Q(r) if self.Q is not None else r
+        dq = dQ(r) if self.dQ is not None else np.eye(len(r))
         # WU = np.linalg.multi_dot((Win, Wout, q))
         WU = Win.dot(np.dot(Wout, q))
         S = sparse.diags(1 - np.tanh(MR+WU)**2)
@@ -541,7 +542,7 @@ class reservoir:
     def __getConnectionMat(N, a = -1, b = 1, pnz = 0.02, SR = 0.9):
         #set elements in M from U(a, b) and enforce sparsity
         M = sparse.random(N, N, density = pnz, data_rvs = uniform(loc=a, scale=(b-a)).rvs)
-        M = sparse.csr_matrix(M)
+        M = sparse.csr_matrix(M, dtype = np.float32)
         
         #rescale to specified spectral radius
         SRM = np.abs(sparse.linalg.eigs(M, k = 1, which='LM', return_eigenvectors=False))
@@ -565,4 +566,19 @@ class reservoir:
         for i, j in enumerate(R):
             mask[i][j] = 1
         Win = np.multiply(np.random.uniform(a, b, (N, D)), mask)
-        return np.array(Win, order = 'C')
+        return sparse.csr_matrix(Win, dtype = np.float32)
+
+
+
+    def _check_const(self, q_shape):
+        ''' check the constraints to make sure they are consistent '''
+        for i in range(self.D):
+          c_prev = 0
+          for j, c in enumerate(self.constraints[i]):
+            c0 = c[0]
+            c1 = c[1]
+            assert(c1 > c0)
+            assert(c0 >= c_prev)
+            assert(c1 <= self.N*q_shape)
+
+            c_prev = c1
