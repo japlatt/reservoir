@@ -1,5 +1,5 @@
 # Reservoir Computing
-Reservoir computers are applied to temporal machine learning tasks where the task is to predict a time series u(t) generated from a dynamical system 
+Reservoir computers are a type of recurrent neural network applied to temporal machine learning tasks where the task is to predict a time series u(t) generated from a dynamical system 
 
 <img src="https://render.githubusercontent.com/render/math?math=\dot{u}(t) = f_u(u(t))," height="30" width="300">
 
