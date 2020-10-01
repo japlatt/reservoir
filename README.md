@@ -9,7 +9,7 @@ A reservoir computer consists of three layers: an input layer Win, the reservoir
 
 The input layer Win is an N x D dimensional matrix that maps the input signal u(t) from D dimensions into the N dimensional reservoir space.  The elements of Win are chosen uniformly between [-1, 1] and such that each row has only one non-zero element i.e., each node has input from only one dimension of u.
 
-The output layer Wout is a matrix such that <img src="https://render.githubusercontent.com/render/math?math=W_{\rm out} Q(r(t)) \equiv \hat{u}(t) \sim u(t)" height="12" width="250"> chosen during the training phase. Wout is a D x qN dimensional matrix with q a positive integer corresponding to the dimension of Q(r(t)).  Q is an expansion of r to incorporate nonlinear elements of the network into the linear regression. This could, for example, be a power expansion---i.e., [r, r^2].  Wout is the only part of the reservoir computer that is trained, here through linear regression.
+The output layer Wout is a matrix such that <img src="https://render.githubusercontent.com/render/math?math=W_{\rm out} Q(r(t)) \equiv \hat{u}(t) \sim u(t)" height="20" width="200"> chosen during the training phase. Wout is a D x qN dimensional matrix with q a positive integer corresponding to the dimension of Q(r(t)).  Q is an expansion of r to incorporate nonlinear elements of the network into the linear regression. This could, for example, be a power expansion---i.e., [r, r^2].  Wout is the only part of the reservoir computer that is trained, here through linear regression.
 
 # Getting Started
 
