@@ -1,17 +1,10 @@
-'''
-To Implement:
-1) Win sparse matrix
-2) False nearest neighbors (FNN)
-3) mutual FNN
-
-'''
-
 import numpy as np
 from scipy.stats import uniform
 from scipy.integrate import odeint
 import scipy.sparse as sparse
 import matplotlib.pyplot as plt
 import lyapunov as lyap
+import seaborn as sns
 
 plt.style.use('seaborn')
 
@@ -48,18 +41,19 @@ class reservoir:
 
         self.ifsave = params['saveplots']
 
-        self.M = self.__getConnectionMat(self.N,
+        self.M = self._getConnectionMat(self.N,
                                          a = params['M_a'],
                                          b = params['M_b'],
                                          pnz = params['M_pnz'],
                                          SR = params['M_SR'])
 
-        self.Win = self.__getInputMat(self.N,
-                                      self.D,
-                                      a = params['Win_a'],
-                                      b = params['Win_b'])
+        self.Win = self._getInputMat(self.N,
+                                     self.D,
+                                     a = params['Win_a'],
+                                     b = params['Win_b'])
 
         self.system = params['system']
+        self.train_noise = params.get('train_noise', 0)
 
         self.Q = None
         self.Wout = None
@@ -98,8 +92,8 @@ class reservoir:
 
         assert(train_time_step >= self.time_step), 'Training time step must be > that integration time step'
 
-        x0, self.Utrain, _ = self.__spinup(train_time)
-        train = odeint(self.__listening,
+        x0, self.Utrain, _ = self._spinup(train_time, noise = self.train_noise)
+        train = odeint(self._listening,
                        x0,
                        np.arange(0, train_time, self.time_step, dtype = np.float32),
                        args = ((self.Utrain , self.gamma, self.M, self.Win),))
@@ -109,11 +103,11 @@ class reservoir:
         data = train[::int(train_time_step/self.time_step)]
 
         self.Q = Q
-        self.Wout = self.__getWout(self.train_t, data, beta, constraints)
+        self.Wout = self._getWout(self.train_t, data, beta, constraints)
         self.train_data = np.dot(self.Wout, Q(data).T) if Q is not None else np.dot(self.Wout, data.T)
 
         if get_jac:
-            Jac_est, Jac = self.__get_train_jac(data)
+            Jac_est, Jac = self._get_train_jac(data)
             return data, Jac_est, Jac
         return data
 
@@ -160,7 +154,7 @@ class reservoir:
         assert(self.train_data is not None), 'must train the model first'
         if acc == None: acc = self.D
 
-        x0, U, spinup = self.__spinup(pred_time)
+        x0, U, spinup = self._spinup(pred_time)
 
         self.predSysx0 = U(0)
 
@@ -193,9 +187,12 @@ class reservoir:
             t_spin = np.arange(-min(self.trans_time/2, 10), 0, self.time_step)
             spin = np.dot(self.Wout, self.Q(spinup).T) if self.Q is not None else np.dot(self.Wout, spinup.T)
             spin = spin.T[int(len(spin.T) - len(t_spin)):]
-            self.__plotPred(fig, ax, U, u_pred, spin.T,
+            self._plotPred(fig, ax, U, u_pred, spin.T,
                             t_spin, self.pred_t, self.D)
-            for k in range(self.D): ax[k].axvline(pred_acc, linestyle = '--')
+            for k in range(self.D):
+                ax[k].axvline(pred_acc, linestyle = '--')
+                ax[k].tick_params(axis='both', labelsize=14)
+                ax[k].set_ylabel(r'$x_{:d}$'.format(k), fontsize = 16)
             ax[-1].set_xlabel('Time', fontsize = 16)
             ax[0].set_title(self.name+' Prediction', fontsize = 20)
             if self.ifsave: fig.savefig(self.name+'_pred.png', bbox_inches = 'tight')
@@ -230,7 +227,7 @@ class reservoir:
         assert(self.train_data is not None), 'Need to train the reservoir to find Lyapunov Exponents'
         if self.Q is not None: assert(self.dQ is not None), 'set DQ before running globalLyap'
 
-        x0, U, _ = self.__spinup(time)
+        x0, U, _ = self._spinup(time)
 
         t = np.arange(0, time, dt)
 
@@ -238,7 +235,7 @@ class reservoir:
 
         p_list = (U, self.gamma, self.M, self.Win)
         p_jac = (self.Q, self.dQ, self.gamma, self.M, self.Win, self.Wout)
-        LE = lyap.computeLE(self.__listening, self.__pred_jac, t,
+        LE = lyap.computeLE(self._listening, self._pred_jac, t,
                             min(self.time_step, dt/4), p_list, p_jac, x0, self.N)
 
         self.LE = LE
@@ -274,7 +271,7 @@ class reservoir:
         rescale = int(dt/self.time_step)
         LE, self.KY_dim = lyap.computeLE_TLM(np.float32(x),
                                              t,
-                                             self.__pred_jac,
+                                             self._pred_jac,
                                              pjac,
                                              self.name,
                                              rescale_interval = rescale,
@@ -286,6 +283,7 @@ class reservoir:
         return np.sort(self.system.LE[-1])[::-1], LE[-1]
 
 
+    '''Conditional Lyapunov Exponents'''
     def CLE(self, time, dt):
         assert(self.train_data is not None), 'Need to train the reservoir to find Lyapunov Exponents'
 
@@ -297,7 +295,7 @@ class reservoir:
         rescale = int(dt/self.time_step)
         LE, KY_dim = lyap.computeLE_TLM( np.float32(x),
                                          t,
-                                         self.__list_jac,
+                                         self._list_jac,
                                          pjac,
                                          self.name,
                                          rescale_interval = rescale)
@@ -328,30 +326,30 @@ class reservoir:
     def integrate(self, time):
         self.system.integrate(-2*self.trans_time, time+self.trans_time)
         U = self.system.getU()
-        trans = odeint(self.__listening,
+        trans = odeint(self._listening,
                      np.random.rand(self.N),
                      np.arange(-self.trans_time, 0, self.time_step),
                      args = ((U, self.gamma, self.M, self.Win),))
-        sol = odeint(self.__listening,
+        sol = odeint(self._listening,
                      np.random.rand(self.N),
                      np.arange(0, time, self.time_step),
                      args = ((U, self.gamma, self.M, self.Win),))
         return sol, U
 
     def getListening(self):
-        return self.__listening
+        return self._listening
 
     def getPredicting(self):
         return self.predicting
 
     def getInpJac(self):
-        return self.__input_jac
+        return self._input_jac
 
     def getPredJac(self):
-        return self.__pred_jac
+        return self._pred_jac
 
     def getSpinup(self):
-        return self.__spinup
+        return self._spinup
 
     ###### PRIVATE FUNCTIONS ###############################
 
@@ -361,12 +359,12 @@ class reservoir:
 
     time: future time past the spinup time that we want U to be valid
     '''
-    def __spinup(self, time):
+    def _spinup(self, time, noise = 0):
         # integrate the system for spin up
-        self.system.integrate(-2*self.trans_time, time)
-        U = self.system.getU() 
+        self.system.integrate(-2*self.trans_time, time, noise = noise)
+        U = self.system.getU()
 
-        spinup = odeint(self.__listening,
+        spinup = odeint(self._listening,
                        np.random.rand(self.N).astype(np.float32),
                        np.arange(-self.trans_time, 0, self.time_step, dtype = np.float32),
                        args = ((U, self.gamma, self.M, self.Win),))
@@ -376,14 +374,15 @@ class reservoir:
     plot the prediction of the reservoir
     '''
     @staticmethod
-    def __plotPred(fig, ax, U, u_pred, spinup, t_spin, t, D):
+    def _plotPred(fig, ax, U, u_pred, spinup, t_spin, t, D):
+        palette = sns.color_palette('dark')
         u = U(t)
         u_spin = U(t_spin)
         for i in range(D):
-            ax[i].plot(t_spin, u_spin[i], 'b-', linewidth = 2)
-            ax[i].plot(t_spin, spinup[i], 'r--', linewidth = 2)
-            ax[i].plot(t, u[i], 'b-', linewidth = 2, label = 'True')
-            ax[i].plot(t, u_pred[i], 'r--',linewidth = 2, label = 'Prediction')
+            ax[i].plot(t_spin, u_spin[i], c = palette[0], lw = 2)
+            ax[i].plot(t_spin, spinup[i], c = palette[1], ls = '--', linewidth = 2)
+            ax[i].plot(t, u[i], c = palette[0], linewidth = 2, label = 'True')
+            ax[i].plot(t, u_pred[i], c = palette[1], ls = '--', lw = 2, label = 'Prediction')
             ax[i].axvline(0, color = 'k', lw = 2)
         plt.legend()
 
@@ -396,7 +395,7 @@ class reservoir:
     constraints = double array of tuples giving the values of Wout to solve for
                   ex: [[(0, N)], [(0, N)], [(0, N//2), (N, 3*N//2)]]
     '''
-    def __getWout(self, t, data, beta, constraints):
+    def _getWout(self, t, data, beta, constraints):
         dataQ = self.Q(data) if self.Q is not None else data
         assert(dataQ.shape[0] == len(t))
 
@@ -430,7 +429,7 @@ class reservoir:
                 else: start = end 
                 end = start+c[1]-c[0]
                 Wout[i, c[0]:c[1]] = Wi[start:end]
-        self.cost = self.__cost(dataQ, u, beta, Wout)
+        self.cost = self._cost(dataQ, u, beta, Wout)
         return np.array(Wout, order = 'C', dtype = np.float32)
 
 
@@ -438,7 +437,7 @@ class reservoir:
     Find the root mean square deviation for the training
     '''
     @staticmethod
-    def __cost(q, u, beta, Wout):
+    def _cost(q, u, beta, Wout):
         z = np.dot(Wout, q.T)
         cst = np.linalg.norm(np.subtract(z,u))**2/u.size
         return cst
@@ -449,16 +448,16 @@ class reservoir:
     dr/dt = gamma * (-r + tanh(M.r+Win.u))
     '''
     @staticmethod
-    def __listening(r, t, p):
+    def _listening(r, t, p):
         U, gamma, M, Win = p
         MR = M.dot(r)
         WU = Win.dot(U(t))
         r = gamma * (-r + np.tanh(MR+WU))
         return r
 
-    '''Jacobian of __listening with respect to u in the dimension of u'''
+    '''Jacobian of _listening with respect to u in the dimension of u'''
     @staticmethod
-    def __input_jac(r, t, p):
+    def _input_jac(r, t, p):
         U, gamma, Q, M, Win, Wout = p
         MR = M.dot(r)
         WU = Win.dot(U(t))
@@ -469,9 +468,9 @@ class reservoir:
             J.append(np.dot(Wout, sW))
         return np.array(J)
 
-    '''Jacobian of __listening with respect to r'''
+    '''Jacobian of _listening with respect to r'''
     @staticmethod
-    def __list_jac(r, t, p):
+    def _list_jac(r, t, p):
         U, gamma, Q, M, Win, Wout = p
         N = len(r)
         MR = M.dot(r)
@@ -485,9 +484,9 @@ class reservoir:
     get the mapped jacobian with respect to u for the listening reservoir and compare to the
     actual jacobian of the dynamical system in the dimension of u.
     '''
-    def __get_train_jac(self, data):
+    def _get_train_jac(self, data):
         assert(self.system.fjac is not None), 'set fjac for system'
-        Jac_est = self.__input_jac(data.T, self.train_t,
+        Jac_est = self._input_jac(data.T, self.train_t,
                                    (self.Utrain, self.gamma,
                                     self.Q, self.M, self.Win, self.Wout))
 
@@ -514,7 +513,7 @@ class reservoir:
     Jacobian of predicting with respect to r
     '''
     @staticmethod
-    def __pred_jac(r, t, p):
+    def _pred_jac(r, t, p):
         Q, dQ, gamma, M, Win, Wout = p
         N = len(r)
         MR = M.dot(r)
@@ -539,7 +538,7 @@ class reservoir:
     SR: spectral radius or magnitude of principle eigenvalue, rescales a/b
     '''
     @staticmethod
-    def __getConnectionMat(N, a = -1, b = 1, pnz = 0.02, SR = 0.9):
+    def _getConnectionMat(N, a = -1, b = 1, pnz = 0.02, SR = 0.9):
         #set elements in M from U(a, b) and enforce sparsity
         M = sparse.random(N, N, density = pnz, data_rvs = uniform(loc=a, scale=(b-a)).rvs)
         M = sparse.csr_matrix(M, dtype = np.float32)
@@ -560,7 +559,7 @@ class reservoir:
     b: upper bound
     '''
     @staticmethod
-    def __getInputMat(N, D, a = -1, b = 1):
+    def _getInputMat(N, D, a = -1, b = 1):
         R = np.argmax(np.random.rand(N, D), axis = 1)
         mask = np.zeros((N, D))
         for i, j in enumerate(R):

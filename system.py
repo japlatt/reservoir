@@ -44,7 +44,7 @@ class system:
     tend: end time
     tstep: time step for integration
     '''
-    def integrate(self, tstart, tend, tstep = None, x0 = None):
+    def integrate(self, tstart, tend, tstep = None, x0 = None, noise = 0):
         assert(tstart < tend), 'start needs to be before end'
         if tstep is not None: self.dt = tstep
         if x0 is None:
@@ -52,11 +52,13 @@ class system:
             x0 += np.random.rand(self.D)
         t = np.arange(tstart, tend, self.dt)
         u = odeint(self.f, x0, t,
-                   args = (self.p,))
+                   args = (self.p,)).T
+        eta = (2.0 * np.random.randn(u.shape[0],u.shape[1]) - 1 )*noise
+        u = np.multiply(u,1.0+eta)
         self.t = t
-        self.u = u
+        self.u = u.T
 
-        return t, u
+        return t, u.T
 
 
     def plot(self):
@@ -103,7 +105,7 @@ class system:
         ui = self.u[:, u_ind][::sample]
         MI = np.zeros(len(lag))
         if num_bins == None: num_bins = int(np.round(np.log2(len(ui))+1)) #Sturges rule
-        for l in lag: MI[l-1] = self.__calc_MI(ui[:-l], ui[l:], num_bins)
+        for l in lag: MI[l-1] = self._calc_MI(ui[:-l], ui[l:], num_bins)
         
 
 
@@ -177,19 +179,6 @@ class system:
         fine structure in local variations
     x0: point at which to start computation of global exp
     '''
-    # def globalLyap(self, time, dt, x0 = None):
-    #     assert(self.fjac is not None), 'Need to provide jacobian for lyapunov expononents'
-    #     if x0 is None:
-    #         assert(self.u is not None), 'run integrate function first'
-    #         x0 = self.u[-1]
-    #     t = np.arange(0, time, dt)
-        
-    #     LE = lyap.computeLE(self.f, self.fjac, t, self.dt, self.p, self.p, x0, self.D)
-
-    #     self.LE = LE
-    #     self.LE_t = t[1:]
-
-    #     return LE[-1]
     def globalLyap(self, time, dt, x0 = None):
         assert(self.fjac is not None), 'Need to provide jacobian for lyapunov expononents'
         if x0 is None:
@@ -199,7 +188,7 @@ class system:
         t, u = self.integrate(0, time, x0 = x0)
 
         rescale = int(dt/self.dt)
-        LE, self.KY_dim = lyap.computeLE_TLM(np.float32(u),
+        LE, self.KY_dim = lyap.computeLE_TLM(u,
                                              t,
                                              self.fjac,
                                              self.p,
@@ -272,7 +261,7 @@ class system:
     Calculate mutual information of 2 time series X, Y
     '''
     @staticmethod
-    def __calc_MI(X, Y, bins):
+    def _calc_MI(X, Y, bins):
         c_xy = np.histogram2d(X, Y, bins)[0]
         MI = mutual_info_score(None, None, contingency=c_xy)
         return MI
