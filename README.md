@@ -1,11 +1,11 @@
 # Reservoir Computing
 Reservoir computers are applied to temporal machine learning tasks where the task is to predict a time series u(t) generated from a dynamical system 
 
-<img src="https://render.githubusercontent.com/render/math?math=\dot{u}(t) = f_u(u(t))," height="50" width="500">
+<img src="https://render.githubusercontent.com/render/math?math=\dot{u}(t) = f_u(u(t))," height="30" width="300">
 
 where the dot denotes a time derivative and f denotes the equations of the dynamical system.  The dimension of the input system---i.e., the number of equations---is D.
 
-A reservoir computer consists of three layers: an input layer Win, the reservoir itself, and an output layer Wout.  The reservoir is composed of N nodes which can be simple nonlinear elements e.g., tanh or sigmoid activation functions, or more complex biological or physical models.  The nodes in the network are connected through an N x N adjacency matrix A, chosen randomly to have a connection density pnz (probability non zero) and non-zero elements uniformly chosen between [-1, 1] and scaled such that the largest eigenvalue of A is a number denoted the spectral radius (SR), usually <img src="https://render.githubusercontent.com/render/math?math=\sim 1">.
+A reservoir computer consists of three layers: an input layer Win, the reservoir itself, and an output layer Wout.  The reservoir is composed of N nodes which can be simple nonlinear elements e.g., tanh or sigmoid activation functions, or more complex biological or physical models.  The nodes in the network are connected through an N x N adjacency matrix A, chosen randomly to have a connection density pnz (probability non zero) and non-zero elements uniformly chosen between [-1, 1] and scaled such that the largest eigenvalue of A is a number denoted the spectral radius (SR), usually <img src="https://render.githubusercontent.com/render/math?math=\sim 1" height="12" width="250">.
 
 The input layer Win is an N x D dimensional matrix that maps the input signal u(t) from D dimensions into the N dimensional reservoir space.  The elements of Win are chosen uniformly between [-1, 1] and such that each row has only one non-zero element i.e., each node has input from only one dimension of u.
 
