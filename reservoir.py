@@ -50,7 +50,8 @@ class reservoir:
         self.Win = self._getInputMat(self.N,
                                      self.D,
                                      a = params['Win_a'],
-                                     b = params['Win_b'])
+                                     b = params['Win_b'],
+                                     one_per_row = params.get('Win_one_per_row', True))
 
         self.system = params['system']
         self.train_noise = params.get('train_noise', 0)
@@ -330,8 +331,9 @@ class reservoir:
                      np.random.rand(self.N),
                      np.arange(-self.trans_time, 0, self.time_step),
                      args = ((U, self.gamma, self.M, self.Win),))
+
         sol = odeint(self._listening,
-                     np.random.rand(self.N),
+                     trans[-1],
                      np.arange(0, time, self.time_step),
                      args = ((U, self.gamma, self.M, self.Win),))
         return sol, U
@@ -559,11 +561,14 @@ class reservoir:
     b: upper bound
     '''
     @staticmethod
-    def _getInputMat(N, D, a = -1, b = 1):
-        R = np.argmax(np.random.rand(N, D), axis = 1)
-        mask = np.zeros((N, D))
-        for i, j in enumerate(R):
-            mask[i][j] = 1
+    def _getInputMat(N, D, a = -1, b = 1, one_per_row = True):
+        if one_per_row:
+            R = np.argmax(np.random.rand(N, D), axis = 1)
+            mask = np.zeros((N, D))
+            for i, j in enumerate(R):
+                mask[i][j] = 1
+        else:
+            return np.random.uniform(a, b, (N, D))
         Win = np.multiply(np.random.uniform(a, b, (N, D)), mask)
         return sparse.csr_matrix(Win, dtype = np.float32)
 
