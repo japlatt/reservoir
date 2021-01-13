@@ -5,8 +5,8 @@ import scipy.sparse as sparse
 import matplotlib.pyplot as plt
 import lyapunov as lyap
 import seaborn as sns
-
-plt.style.use('seaborn')
+from multiprocessing import Pool
+from functools import partial
 
 class reservoir:
 
@@ -212,6 +212,13 @@ class reservoir:
     '''
     def setDQ(self, dQ):
         self.dQ = dQ
+
+    def getDQ(self, r):
+        return self.dQ(r)
+
+    def getQ(self, r):
+        return self.Q(r)
+            
             
 
     '''
@@ -301,6 +308,32 @@ class reservoir:
                                          self.name,
                                          rescale_interval = rescale)
         return LE[-1]
+
+
+    def localExp(self, x, t, U, L, dt, multi = False, num_it = 3):
+        assert(len(x.shape) == 2), 'Provide multidimensional array'
+        n, D = x.shape
+        T = L*dt
+
+        p = (U , self.gamma, self.M, self.Win)
+        pjac = (self.getQ, self.getDQ, self.gamma, self.M, self.Win, self.Wout)
+        
+
+        if multi:
+            with Pool() as pool: 
+                parr_fun = partial(lyap.LLE, f = self._listening, fjac = self._pred_jac,
+                                   pf = p, pjac = pjac, T = T, L = L, dt = self.time_step,
+                                   num_it = num_it)
+                LE= pool.starmap(parr_fun, zip(x, t))
+                pool.close()
+                pool.join()  
+
+        else:
+            LE = []
+            for i, x0 in enumerate(x):
+                LE.append(lyap.LLE(x0, t[i], self._listening, self._pred_jac,
+                                  p, pjac, T, L, self.time_step, num_it))
+        return np.array(LE)
 
     '''
     Plot the calculated Lyapunov exponents
@@ -519,8 +552,8 @@ class reservoir:
         Q, dQ, gamma, M, Win, Wout = p
         N = len(r)
         MR = M.dot(r)
-        q = Q(r) if self.Q is not None else r
-        dq = dQ(r) if self.dQ is not None else np.eye(len(r))
+        q = Q(r) if Q is not None else r
+        dq = dQ(r) if dQ is not None else np.eye(len(r))
         # WU = np.linalg.multi_dot((Win, Wout, q))
         WU = Win.dot(np.dot(Wout, q))
         S = sparse.diags(1 - np.tanh(MR+WU)**2)

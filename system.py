@@ -233,7 +233,7 @@ class system:
     dt: time step so T = L*dt where T is the time going forward
     multi: multiprocessing true or false
     '''
-    def localExp(self, x, L, dt, multi = False):
+    def localExp(self, x, t, L, dt, multi = False):
         assert(self.fjac is not None), 'Need to provide jacobian for lyapunov expononents'
         assert(len(x.shape) == 2), 'Provide multidimensional array'
         n, D = x.shape
@@ -244,15 +244,15 @@ class system:
             with Pool() as pool: 
                 parr_fun = partial(lyap.LLE, f = self.f, fjac = self.fjac,
                                    pf = self.p, pjac = self.p, T = T, L = L, dt = self.dt)
-                LE= pool.map(parr_fun, x)
+                LE= pool.starmap(parr_fun, zip(x, t))
                 pool.close()
                 pool.join()  
 
         else:
             LE = []
             for i, x0 in enumerate(x):
-                LE.append(lyap.LLE(x0, self.f, self.fjac,
-                                 self.p, self.p, T, L, self.dt))
+                LE.append(lyap.LLE(x0, t[i], self.f, self.fjac,
+                                   self.p, self.p, T, L, self.dt))
         return np.array(LE)
 
 

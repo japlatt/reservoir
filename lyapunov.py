@@ -163,19 +163,21 @@ lRQR = lyapunov exponents from max to min
 Q = need to check if this is close to identity matrix.
 Up to a minus sign. abs(Q) should be arbitrarily close to the identity matrix.
 '''
-def rec_QR(A, T, num_it = 5):
+def rec_QR(A, T, num_it = 3):
     M_arr = A
-    Q0 = np.eye(np.shape(A)[1])
+    Q0 = np.eye(np.shape(A)[1], dtype=np.float32)
     for _ in range(num_it):
         L, N, _ = np.shape(M_arr)
         Q_prev = Q0
-        R_arr = np.zeros((L, N, N))
+        R_arr = np.zeros((L, N, N), dtype=np.float32)
         for i in range(L-1, -1, -1):
             Q, R = np.linalg.qr(np.dot(M_arr[i], Q_prev))
             R_arr[i] = R
             Q_prev = Q
         M_arr = np.append(R_arr, [Q], axis = 0)
 
+    print('Q needs to be close to identity, max difference is: ', 
+           np.max(np.abs(np.diag(Q)) - np.abs(np.ones(Q.shape[0]))))
     diag = [np.diag(x) for x in R_arr]
     diag.append(np.diag(Q))
     diag = np.abs(diag)
@@ -196,7 +198,7 @@ dt: integration time step
 
 return local lyapunov exponents
 '''
-def LLE(x0, f, fjac, pf, pjac, T, L, dt):
+def LLE(x0, t0, f, fjac, pf, pjac, T, L, dt, num_it = 3):
 
     def dPhi_dt(Phi, t, x, pjac, Dim):
         """ The variational equation """
@@ -215,21 +217,23 @@ def LLE(x0, f, fjac, pf, pjac, T, L, dt):
         Phi = S[Dim:]
         return np.append(f(x, t, pf), dPhi_dt(Phi, t, x, pjac, Dim))
 
-    x_arr = [x0]
-    Phi_arr = []
-    tL = np.linspace(0, T, L+1)
     Dim = len(x0)
-    Phi0 = np.eye(Dim, dtype=np.float64).flatten()
+    x_arr = np.float32(x0)
+    Phi_arr = []
+    tL = np.linspace(t0, t0+T, L+1, dtype=np.float32)
+    
+    Phi0 = np.eye(Dim, dtype=np.float32).flatten()
     for i,(t1,t2) in enumerate(zip(tL[:-1], tL[1:])):
         sol = solve_ivp(dSdt, [t1, t2],
-                        np.append(x_arr[i], Phi0),
+                        np.append(x_arr, Phi0),
+                        t_eval=[t1, t2],
                         method = 'RK45',
                         max_step = dt,
                         args = (pf, pjac, Dim))
-        x_arr.append(sol.y[:Dim].T[-1])
-        Phi_arr.append(sol.y[Dim:].T[-1].reshape(Dim, Dim))
+        x_arr = sol.y[:Dim].T[-1]
+        Phi_arr.append(np.float32(sol.y[Dim:].T[-1].reshape(Dim, Dim)))
     Phi_arr = np.array(Phi_arr)
     OSE = np.concatenate((Phi_arr.transpose(0,2,1), np.flip(Phi_arr, axis = 0)))
-    lyap, Q = rec_QR(OSE, T)
+    lyap, Q = rec_QR(OSE, T, num_it)
     gc.collect()
     return lyap
