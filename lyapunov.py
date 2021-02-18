@@ -227,7 +227,7 @@ def LLE(x0, t0, f, fjac, pf, pjac, T, L, dt, num_it = 3):
         sol = solve_ivp(dSdt, [t1, t2],
                         np.append(x_arr, Phi0),
                         t_eval=[t1, t2],
-                        method = 'RK45',
+                        method = 'RK45', #DOP853
                         max_step = dt,
                         args = (pf, pjac, Dim))
         x_arr = sol.y[:Dim].T[-1]

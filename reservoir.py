@@ -198,7 +198,7 @@ class reservoir:
             ax[0].set_title(self.name+' Prediction', fontsize = 20)
             if self.ifsave: fig.savefig(self.name+'_pred.png', bbox_inches = 'tight')
             if show: plt.show()
-        if retDat: return self.pred_acc, u_pred, U(self.pred_t)
+        if retDat: return self.pred_acc, u_pred, U(self.pred_t), pred
         return self.pred_acc
 
 
@@ -214,10 +214,10 @@ class reservoir:
         self.dQ = dQ
 
     def getDQ(self, r):
-        return self.dQ(r)
+        return self.dQ(r) if self.dQ is not None else None
 
     def getQ(self, r):
-        return self.Q(r)
+        return self.Q(r) if self.Q is not None else None
             
             
 
@@ -316,7 +316,7 @@ class reservoir:
         T = L*dt
 
         p = (U , self.gamma, self.M, self.Win)
-        pjac = (self.getQ, self.getDQ, self.gamma, self.M, self.Win, self.Wout)
+        pjac = (self.Q, self.dQ, self.gamma, self.M, self.Win, self.Wout)
         
 
         if multi:

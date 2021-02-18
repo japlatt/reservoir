@@ -79,7 +79,7 @@ class system:
     '''
     def getU(self):
         assert(self.u is not None), 'U has not been set, run integrate function first'
-        self.U = interp1d(self.t, self.u.T, fill_value="extrapolate", )
+        self.U = interp1d(self.t, self.u.T, fill_value="extrapolate")
         return self.U
 
 
