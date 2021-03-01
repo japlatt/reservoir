@@ -56,6 +56,8 @@ class reservoir:
         self.system = params['system']
         self.train_noise = params.get('train_noise', 0)
 
+        self.ext_U = None
+
         self.Q = None
         self.Wout = None
         self.train_data = None
@@ -119,6 +121,7 @@ class reservoir:
         assert(self.train_data is not None), 'must train the model first'
         u = self.Utrain(self.train_t) #construct u at time points needed
         fig, ax = plt.subplots(self.D, 1, sharex = True, figsize = (10, 7))
+        if np.array([ax]).ndim == 1: ax = [ax]
         for i in range(self.D):
             ax[i].plot(self.train_t, u[i], 'b-', linewidth = 2, label = 'True')
             ax[i].plot(self.train_t, self.train_data[i], 'r--',linewidth = 2, label = 'Estimate')
@@ -185,6 +188,7 @@ class reservoir:
 
         if show or self.ifsave:
             fig, ax = plt.subplots(self.D, 1, sharex = True, figsize = (10, 7))
+            if np.array([ax]).ndim == 1: ax = [ax]
             t_spin = np.arange(-min(self.trans_time/2, 10), 0, self.time_step)
             spin = np.dot(self.Wout, self.Q(spinup).T) if self.Q is not None else np.dot(self.Wout, spinup.T)
             spin = spin.T[int(len(spin.T) - len(t_spin)):]
@@ -266,7 +270,7 @@ class reservoir:
     '''
     def globalLyap_TLM(self, time, dt, num_save = -1, savetxt = False):
         assert(self.train_data is not None), 'Need to train the reservoir to find Lyapunov Exponents'
-        assert(self.dQ is not None), 'set DQ before running globalLyap'
+        if self.Q is not None: assert(self.dQ is not None), 'set DQ before running globalLyap'
 
         t = np.arange(0, time, self.time_step, dtype = np.float32)
         x, U = self.integrate(time)

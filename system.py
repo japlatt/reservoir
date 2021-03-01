@@ -163,13 +163,30 @@ class system:
 
         print(np.round(NFNN,3)*100)
         for i, n in enumerate(NFNN):
-            if n < 1e-3: 
+            if n < 1e-2: 
                 print('minimum embedding dimension is {:d} with NFNN {:1.3f}'.format(i+1, n*100))
                 self.min_emb = i+1
                 return
         print('ERROR: need to search more dimensions')
-        
 
+    '''
+    get the time delay signal using the time delay T and min embedding dimension
+    '''
+    def get_td_coords(self, u_ind = 0):
+        assert(self.u is not None), 'run integrate function first'
+        assert(self.T is not None), 'call findMinAMI before running FNN'
+        assert(self.min_emb is not None), "call FNN"
+        x = self.u[:, u_ind]
+        T = self.T*self.sample
+        nDim = self.min_emb
+
+        t = self.t[T:-T*nDim+T-1]
+        y = x[:-nDim*T-1]
+        y = y.reshape(1, -1)
+        for i in range(nDim-1):
+            y2 = np.vstack((y, x[(i+1)*T:-T*nDim+(i+1)*T-1]))
+            y = y2
+        return t, y2
 
     '''
     Compute the global lyapunov exponents using QR factorization method.
