@@ -154,11 +154,11 @@ class reservoir:
     pred_time: time to check the prediction
     acc: accuracy for determining predictive power
     '''
-    def predict(self, pred_time, acc = None, show = False, retDat = False):
+    def predict(self, pred_time, u0 = None, x0 = None, acc = None, show = False, retDat = False):
         assert(self.train_data is not None), 'must train the model first'
         if acc == None: acc = self.D
 
-        x0, U, spinup = self._spinup(pred_time)
+        x0, U, spinup = self._spinup(pred_time, u0 = u0, x0 = x0)
 
         self.predSysx0 = U(0)
 
@@ -398,13 +398,14 @@ class reservoir:
 
     time: future time past the spinup time that we want U to be valid
     '''
-    def _spinup(self, time, noise = 0):
+    def _spinup(self, time, noise = 0, u0 = None, x0 = None):
         # integrate the system for spin up
-        self.system.integrate(-2*self.trans_time, time, noise = noise)
+        self.system.integrate(-2*self.trans_time, time, noise = noise, x0 = u0)
         U = self.system.getU()
 
+        x0 = x0 if x0 is not None else np.random.rand(self.N).astype(np.float32)
         spinup = odeint(self._listening,
-                       np.random.rand(self.N).astype(np.float32),
+                       x0,
                        np.arange(-self.trans_time, 0, self.time_step, dtype = np.float32),
                        args = ((U, self.gamma, self.M, self.Win),))
 
